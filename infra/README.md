@@ -102,7 +102,7 @@ ssh -T git@github.com
 
 ```bash
 ssh deploy@server
-REPO=git@github.com:USER/REPO.git BRANCH=main bash /var/www/codenames/deploy.sh
+REPO=git@github.com:nikwho/codenames.git BRANCH=main bash /var/www/codenames/deploy.sh
 ```
 
 Or from a checked-out copy of `infra/deploy.sh` on the server (bootstrap already installs it under `APP_DIR`).
