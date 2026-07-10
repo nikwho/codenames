@@ -13,6 +13,7 @@ APP_NAME="${APP_NAME:-codenames}"
 APP_USER="${APP_USER:-deploy}"
 APP_DIR="${APP_DIR:-/var/www/${APP_NAME}}"
 DOMAIN="${DOMAIN:-example.com}"
+ACME_WEBROOT="${ACME_WEBROOT:-/var/www/acme}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 APP_PORT="${APP_PORT:-3001}"
 
@@ -21,9 +22,20 @@ FRONTEND_DIST_REL="${FRONTEND_DIST_REL:-client/dist}"
 FRONTEND_DIST_PATH="${APP_DIR}/current/${FRONTEND_DIST_REL}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NGINX_TEMPLATE="${SCRIPT_DIR}/nginx.conf.template"
+RENDER_SCRIPT="${SCRIPT_DIR}/render-nginx.sh"
 NGINX_SITE="/etc/nginx/sites-available/${APP_NAME}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${APP_NAME}"
+
+is_ip_address() {
+  local host="$1"
+  if [[ "${host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    return 0
+  fi
+  if [[ "${host}" == *:* ]]; then
+    return 0
+  fi
+  return 1
+}
 
 echo "==> Bootstrap starting"
 echo "    APP_NAME=${APP_NAME}"
@@ -33,6 +45,7 @@ echo "    DOMAIN=${DOMAIN}"
 echo "    NODE_MAJOR=${NODE_MAJOR}"
 echo "    APP_PORT=${APP_PORT}"
 echo "    FRONTEND_DIST_PATH=${FRONTEND_DIST_PATH}"
+echo "    ACME_WEBROOT=${ACME_WEBROOT}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "ERROR: run this script as root (ssh root@server)." >&2
@@ -56,9 +69,17 @@ case "${VERSION_ID:-}" in
     ;;
 esac
 
-if [[ ! -f "${NGINX_TEMPLATE}" ]]; then
-  echo "ERROR: nginx template missing: ${NGINX_TEMPLATE}" >&2
+if [[ ! -f "${RENDER_SCRIPT}" ]]; then
+  echo "ERROR: render script missing: ${RENDER_SCRIPT}" >&2
   exit 1
+fi
+
+if is_ip_address "${DOMAIN}"; then
+  PUBLIC_SCHEME="http"
+  USE_IP_HTTPS=1
+else
+  PUBLIC_SCHEME="https"
+  USE_IP_HTTPS=0
 fi
 
 echo "==> Updating apt packages"
@@ -109,7 +130,9 @@ echo "==> Creating application directories (will not delete existing releases)"
 mkdir -p \
   "${APP_DIR}/releases" \
   "${APP_DIR}/shared/logs" \
-  "${APP_DIR}/shared"
+  "${APP_DIR}/shared" \
+  "${ACME_WEBROOT}/.well-known/acme-challenge"
+chmod -R 755 "${ACME_WEBROOT}"
 
 if [[ ! -f "${APP_DIR}/shared/.env" ]]; then
   echo "==> Creating placeholder shared/.env (edit before first deploy)"
@@ -122,7 +145,8 @@ NODE_ENV=production
 PORT=${APP_PORT}
 
 # Must match the public site origin served by nginx (scheme + host, no trailing slash)
-CLIENT_ORIGIN=https://${DOMAIN}
+# For IP deploys: use http until setup-https-ip.sh finishes, then https.
+CLIENT_ORIGIN=${PUBLIC_SCHEME}://${DOMAIN}
 EOF
   chmod 640 "${APP_DIR}/shared/.env"
 else
@@ -132,9 +156,11 @@ fi
 echo "==> Installing helper scripts into ${APP_DIR}"
 install -m 755 "${SCRIPT_DIR}/deploy.sh" "${APP_DIR}/deploy.sh"
 install -m 755 "${SCRIPT_DIR}/rollback.sh" "${APP_DIR}/rollback.sh"
-if [[ -f "${SCRIPT_DIR}/nginx.conf.template" ]]; then
-  install -m 644 "${SCRIPT_DIR}/nginx.conf.template" "${APP_DIR}/nginx.conf.template"
-fi
+for tpl in nginx.conf.template nginx.ssl.conf.template nginx.app.conf.template; do
+  install -m 644 "${SCRIPT_DIR}/${tpl}" "${APP_DIR}/${tpl}"
+done
+install -m 755 "${SCRIPT_DIR}/render-nginx.sh" "${APP_DIR}/render-nginx.sh"
+install -m 755 "${SCRIPT_DIR}/setup-https-ip.sh" "${APP_DIR}/setup-https-ip.sh"
 
 echo "==> Setting ownership on ${APP_DIR}"
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
@@ -159,15 +185,8 @@ echo "==> Enabling fail2ban"
 systemctl enable --now fail2ban
 
 echo "==> Generating nginx site from template"
-TMP_CONF="$(mktemp)"
-sed \
-  -e "s|{{DOMAIN}}|${DOMAIN}|g" \
-  -e "s|{{APP_DIR}}|${APP_DIR}|g" \
-  -e "s|{{APP_PORT}}|${APP_PORT}|g" \
-  -e "s|{{FRONTEND_DIST_PATH}}|${FRONTEND_DIST_PATH}|g" \
-  "${NGINX_TEMPLATE}" > "${TMP_CONF}"
-install -m 644 "${TMP_CONF}" "${NGINX_SITE}"
-rm -f "${TMP_CONF}"
+export APP_NAME APP_DIR DOMAIN APP_PORT ACME_WEBROOT FRONTEND_DIST_PATH SSL_MODE=http
+bash "${RENDER_SCRIPT}"
 
 if [[ -L /etc/nginx/sites-enabled/default ]] || [[ -f /etc/nginx/sites-enabled/default ]]; then
   echo "==> Removing nginx default site"
@@ -187,7 +206,12 @@ echo "Next steps:"
 echo "  1) Edit env:   sudo nano ${APP_DIR}/shared/.env"
 echo "  2) SSH key:    set up deploy key for user ${APP_USER} (see infra/README.md)"
 echo "  3) Deploy:     su - ${APP_USER} -c 'REPO=git@github.com:USER/REPO.git BRANCH=main bash ${APP_DIR}/deploy.sh'"
-echo "  4) HTTPS:      sudo certbot --nginx -d ${DOMAIN}   (after DNS points here)"
+if [[ "${USE_IP_HTTPS}" -eq 1 ]]; then
+  echo "  4) HTTPS (IP): CERTBOT_EMAIL=you@example.com DOMAIN=${DOMAIN} bash ${APP_DIR}/setup-https-ip.sh"
+  echo "               (after first deploy; needs Certbot >= 5.4 — see infra/README.md)"
+else
+  echo "  4) HTTPS:      sudo certbot --nginx -d ${DOMAIN}   (after DNS points here)"
+fi
 echo
 echo "Note: until the first successful deploy, ${FRONTEND_DIST_PATH} will not exist yet;"
 echo "nginx may 404 static files until current/ is created."

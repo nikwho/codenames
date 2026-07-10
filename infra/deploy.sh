@@ -118,9 +118,16 @@ if [[ -d "${RELEASE_DIR}/infra" ]]; then
   echo "==> Refreshing scripts in ${APP_DIR} from release infra/"
   install -m 755 "${RELEASE_DIR}/infra/deploy.sh" "${APP_DIR}/deploy.sh"
   install -m 755 "${RELEASE_DIR}/infra/rollback.sh" "${APP_DIR}/rollback.sh"
-  if [[ -f "${RELEASE_DIR}/infra/nginx.conf.template" ]]; then
-    install -m 644 "${RELEASE_DIR}/infra/nginx.conf.template" "${APP_DIR}/nginx.conf.template"
-  fi
+  for tpl in nginx.conf.template nginx.ssl.conf.template nginx.app.conf.template; do
+    if [[ -f "${RELEASE_DIR}/infra/${tpl}" ]]; then
+      install -m 644 "${RELEASE_DIR}/infra/${tpl}" "${APP_DIR}/${tpl}"
+    fi
+  done
+  for script in render-nginx.sh setup-https-ip.sh; do
+    if [[ -f "${RELEASE_DIR}/infra/${script}" ]]; then
+      install -m 755 "${RELEASE_DIR}/infra/${script}" "${APP_DIR}/${script}"
+    fi
+  done
   if [[ -f "${RELEASE_DIR}/ecosystem.config.cjs" ]]; then
     install -m 644 "${RELEASE_DIR}/ecosystem.config.cjs" "${APP_DIR}/ecosystem.config.cjs"
   fi

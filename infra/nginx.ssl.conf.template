@@ -1,0 +1,43 @@
+# Placeholders replaced by render-nginx.sh (SSL_MODE=https):
+#   {{DOMAIN}} {{APP_NAME}} {{ACME_WEBROOT}} {{SSL_CERT_PATH}} {{SSL_KEY_PATH}}
+
+upstream codenames_backend {
+    server 127.0.0.1:{{APP_PORT}};
+    keepalive 32;
+}
+
+# HTTP — ACME http-01 challenges + redirect everything else to HTTPS
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name {{DOMAIN}} _;
+
+    access_log /var/log/nginx/{{DOMAIN}}.http.access.log;
+    error_log  /var/log/nginx/{{DOMAIN}}.http.error.log;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root {{ACME_WEBROOT}};
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS — application (Let's Encrypt IP certificate, ~6 day lifetime)
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name {{DOMAIN}} _;
+
+    ssl_certificate     {{SSL_CERT_PATH}};
+    ssl_certificate_key {{SSL_KEY_PATH}};
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    access_log /var/log/nginx/{{DOMAIN}}.access.log;
+    error_log  /var/log/nginx/{{DOMAIN}}.error.log;
+
+    include /etc/nginx/snippets/{{APP_NAME}}-app.conf;
+}

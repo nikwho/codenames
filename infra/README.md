@@ -23,8 +23,9 @@ Layout on the server:
 ## Prerequisites
 
 - Fresh Ubuntu **22.04** or **24.04** VPS
-- DNS A/AAAA record for your domain pointing at the VPS (needed for HTTPS/certbot)
 - Git repository accessible via SSH from the VPS `deploy` user
+- **With a domain:** DNS A/AAAA record pointing at the VPS (for `certbot --nginx`)
+- **IP only (no domain):** public IPv4 or IPv6; HTTPS via Let's Encrypt IP certificates (see §8b)
 
 ## 1. Prepare the VPS (once, as root)
 
@@ -33,7 +34,10 @@ Copy this repo to the server temporarily (or clone it once as root), then:
 ```bash
 ssh root@server
 cd /path/to/codenames   # directory that contains infra/
+# Domain:
 APP_NAME=codenames DOMAIN=your-domain.com bash infra/bootstrap-vps.sh
+# Or public IP only:
+APP_NAME=codenames DOMAIN=203.0.113.10 bash infra/bootstrap-vps.sh
 ```
 
 Useful overrides:
@@ -47,7 +51,6 @@ NODE_MAJOR=22 \
 APP_PORT=3001 \
 bash infra/bootstrap-vps.sh
 ```
-
 What bootstrap does:
 
 - installs Node.js, nginx, UFW, fail2ban, PM2
@@ -156,6 +159,8 @@ Backend (direct / via nginx):
 ```bash
 curl http://127.0.0.1:3001/api/health
 curl https://your-domain.com/api/health
+# IP-only:
+curl https://203.0.113.10/api/health
 ```
 
 Expected JSON shape:
@@ -164,7 +169,9 @@ Expected JSON shape:
 { "ok": true, "uptime": "12s", "time": "2026-07-08T09:00:00.000Z" }
 ```
 
-## 8. HTTPS (after DNS points at the VPS)
+## 8. HTTPS
+
+### 8a. Domain (DNS → VPS)
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
@@ -172,6 +179,50 @@ sudo certbot --nginx -d your-domain.com
 ```
 
 Certbot will extend the nginx site for TLS. Re-run bootstrap carefully if you need to regenerate the HTTP template — prefer editing the live site or re-applying certbot after template changes.
+
+### 8b. Public IP only (no domain)
+
+Let's Encrypt issues **trusted** certificates for public IP addresses (IPv4/IPv6) via the **shortlived** profile (~6 days). Certbot **≥ 5.4** is required; `certbot --nginx` does **not** support IP certs yet — use `infra/setup-https-ip.sh`.
+
+**Order matters:**
+
+1. Bootstrap with your public IP as `DOMAIN`
+2. First deploy (app must be served on HTTP port 80)
+3. Run HTTPS setup as root
+
+```bash
+# 1. Bootstrap (root)
+APP_NAME=codenames DOMAIN=203.0.113.10 bash infra/bootstrap-vps.sh
+
+# 2. Deploy (deploy user) — see §4
+REPO=git@github.com:USER/REPO.git BRANCH=main bash /var/www/codenames/deploy.sh
+
+# 3. HTTPS (root) — test with staging first if you like
+CERTBOT_STAGING=1 CERTBOT_EMAIL=you@example.com DOMAIN=203.0.113.10 \
+  bash /var/www/codenames/setup-https-ip.sh
+
+# Production certificate (browser-trusted):
+CERTBOT_EMAIL=you@example.com DOMAIN=203.0.113.10 \
+  bash /var/www/codenames/setup-https-ip.sh
+
+# 4. Reload API so CORS matches https://
+su - deploy -c 'cd /var/www/codenames && pm2 startOrReload ecosystem.config.cjs --update-env && pm2 save'
+```
+
+`setup-https-ip.sh` will:
+
+- install Certbot via snap if the system package is too old
+- obtain a certificate with `--webroot` + `--ip-address` + `--preferred-profile shortlived`
+- switch nginx to HTTP (ACME + redirect) + HTTPS (app)
+- set `CLIENT_ORIGIN=https://YOUR_IP` in `shared/.env`
+
+Renewal is handled by `certbot.timer` (twice daily). A deploy-hook reloads nginx after each renewal.
+
+**Notes:**
+
+- Until step 3 completes, use `CLIENT_ORIGIN=http://YOUR_IP` (bootstrap sets this for IP hosts).
+- Certificate lifetime is ~6 days (LE policy for IP addresses).
+- `curl https://YOUR_IP/api/health` should work without `-k` after a production cert is issued.
 
 ## 9. End-to-end flow
 
