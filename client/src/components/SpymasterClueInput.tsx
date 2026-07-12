@@ -1,53 +1,59 @@
 import { useState } from "react";
-import type { SanitizedGameState, SubmitCluePayload } from "@codenames/shared";
+import type { SanitizedGameState, SubmitCluePayload, Team, TeamSelection } from "@codenames/shared";
 
 interface SpymasterClueInputProps {
   state: SanitizedGameState;
   onSubmit: (payload: SubmitCluePayload) => void;
 }
 
+function spymasterClueTeam(playerTeam: TeamSelection): Team | null {
+  if (playerTeam === "red" || playerTeam === "blue") {
+    return playerTeam;
+  }
+  return null;
+}
+
 export function SpymasterClueInput({ state, onSubmit }: SpymasterClueInputProps) {
   const [text, setText] = useState("");
   const player = state.currentPlayer;
+  const assignedTeam = spymasterClueTeam(player?.team ?? null);
+  const clueForTeam = assignedTeam ?? state.currentTeam;
   const canSubmit =
-    state.status === "clue_phase" &&
+    (state.status === "clue_phase" || state.status === "guessing_phase") &&
+    !state.currentClue &&
     player?.role === "spymaster" &&
     (player.team === "both" || player.team === state.currentTeam);
-  const isRealSpymaster = player?.role === "spymaster";
+
+  const submit = () => {
+    if (!canSubmit || !text.trim()) {
+      return;
+    }
+    onSubmit({ text });
+    setText("");
+  };
 
   return (
-    <section className="rounded-2xl border border-red-400/20 bg-red-950/20 p-3 sm:rounded-3xl sm:p-4">
-      <h2 className="text-sm font-black uppercase tracking-wide">
-        Загадываете за: {state.settings.teamNames[state.currentTeam]}
-      </h2>
-      {!isRealSpymaster && (
-        <p className="mt-3 rounded-2xl bg-amber-400/10 p-3 text-sm text-amber-100">
-          Это только debug-отображение. Роль игрока не изменилась, отправка подсказки недоступна.
-        </p>
-      )}
-      {isRealSpymaster && state.status !== "clue_phase" && (
-        <p className="mt-3 rounded-2xl bg-amber-400/10 p-3 text-sm text-amber-100">
-          Сейчас команда отгадывает. Дождитесь своего хода.
-        </p>
-      )}
-      <div className="mt-4 flex min-w-0 flex-col gap-3">
-        <input
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="Например: стол 2"
-          className="field w-full min-w-0"
-        />
-        <button
-          className="btn-primary w-full shrink-0"
-          onClick={() => {
-            onSubmit({ text });
-            setText("");
-          }}
-          disabled={!canSubmit || !text.trim()}
-        >
-          Отправить
-        </button>
-      </div>
-    </section>
+    <form
+      className="flex min-w-0 gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <input
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="слово 2"
+        disabled={!canSubmit}
+        className={`field min-w-0 flex-1 ${
+          clueForTeam === "red"
+            ? "border-red-400/50 bg-red-950/40 focus:border-red-300 focus:shadow-[0_0_0_3px_rgba(239,68,68,0.18)]"
+            : "border-blue-400/50 bg-blue-950/40 focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.18)]"
+        }`}
+      />
+      <button type="submit" className="btn-primary shrink-0 px-4" disabled={!canSubmit || !text.trim()}>
+        OK
+      </button>
+    </form>
   );
 }

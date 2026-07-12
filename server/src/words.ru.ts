@@ -1,4 +1,7 @@
-export const WORDS_RU = [
+import { MORE_WORDS_RU } from "./words.ru.extra.js";
+import { MORE_WORDS_RU_2 } from "./words.ru.more.js";
+
+const BASE_WORDS_RU = [
   "автобус",
   "автор",
   "адрес",
@@ -244,6 +247,8 @@ export const WORDS_RU = [
   "яблоко",
   "якорь"
 ] as const;
+
+export const WORDS_RU = [...new Set([...BASE_WORDS_RU, ...MORE_WORDS_RU, ...MORE_WORDS_RU_2])] as const;
 
 export function pickWords(count: number): string[] {
   if (count > WORDS_RU.length) {

@@ -2,6 +2,7 @@ import {
   DEFAULT_SETTINGS,
   type Card,
   type CardType,
+  type Clue,
   type GameRoom,
   type JoinRoomPayload,
   type PlayerDevice,
@@ -41,6 +42,7 @@ export function createGame(settingsPatch: Partial<Settings> = {}, roomId = gener
     },
     currentTeam,
     currentClue: null,
+    clueHistory: [],
     timers: {
       phaseEndsAt: null,
       phaseDurationSeconds: null,
@@ -55,6 +57,18 @@ export function createGame(settingsPatch: Partial<Settings> = {}, roomId = gener
     createdAt: now,
     updatedAt: now
   };
+}
+
+export function createContinuationGame(source: GameRoom, roomId = generateRoomId()): GameRoom {
+  const fresh = createGame(source.settings, roomId);
+  const now = Date.now();
+  fresh.players = source.players.map((player) => ({
+    ...player,
+    connected: true,
+    lastSeenAt: now
+  }));
+  addLog(fresh, "Создана новая игра с теми же игроками");
+  return fresh;
 }
 
 export function addPlayer(room: GameRoom, payload: JoinRoomPayload): PlayerDevice {
@@ -175,6 +189,7 @@ export function startGame(room: GameRoom): GameRoom {
   room.winner = null;
   room.keyRevealed = false;
   room.currentClue = null;
+  room.clueHistory = [];
   room.currentTeam = currentTeam;
   room.teams = {
     red: { remaining: cardCounts.red },
@@ -203,12 +218,8 @@ export function restartRound(room: GameRoom): GameRoom {
   return startGame(room);
 }
 
-export function newGame(room: GameRoom): GameRoom {
-  return restartRound(room);
-}
-
 export function submitClue(room: GameRoom, deviceId: string, payload: SubmitCluePayload): GameRoom {
-  requireStatus(room, ["clue_phase"]);
+  requireStatus(room, ["clue_phase", "guessing_phase"]);
   const player = requirePlayer(room, deviceId);
   if (player.role !== "spymaster") {
     throw new GameError("Подсказку может дать только загадывающий");
@@ -216,19 +227,37 @@ export function submitClue(room: GameRoom, deviceId: string, payload: SubmitClue
   if (!canSpymasterAct(player, room.currentTeam)) {
     throw new GameError("Этот загадывающий не может давать подсказку за активную команду");
   }
+  if (room.currentClue) {
+    throw new GameError("Подсказка для этого хода уже задана");
+  }
 
   const text = payload.text.trim();
   if (!text) {
     throw new GameError("Подсказка не может быть пустой");
   }
+  validateClueText(room, text);
 
-  room.currentClue = {
+  const clue: Clue = {
+    id: cryptoRandomId("clue"),
     text,
+    team: room.currentTeam,
     givenByDeviceId: deviceId,
     givenAt: Date.now()
   };
-  setPhase(room, "guessing_phase", room.settings.guessingSeconds);
+  room.currentClue = clue;
+  room.clueHistory.unshift(clue);
+  if (room.status === "clue_phase") {
+    setPhase(room, "guessing_phase", room.settings.guessingSeconds);
+  }
   addLog(room, `${player.name} дал подсказку: ${text}`, deviceId);
+  touch(room);
+  return room;
+}
+
+export function startGuessingWithoutClue(room: GameRoom): GameRoom {
+  requireStatus(room, ["clue_phase"]);
+  setPhase(room, "guessing_phase", room.settings.guessingSeconds);
+  addLog(room, `Время на подсказку вышло. Команда ${teamLabel(room, room.currentTeam)} может отгадывать без подсказки`);
   touch(room);
   return room;
 }
@@ -333,6 +362,7 @@ export function sanitizeStateForPlayer(room: GameRoom, deviceId: string, options
     }),
     players: room.players.map((player) => ({ ...player })),
     actionLog: [...room.actionLog],
+    clueHistory: room.clueHistory.map((clue) => ({ ...clue })),
     settings: { ...room.settings, teamNames: { ...room.settings.teamNames } },
     teams: {
       red: { ...room.teams.red },
@@ -494,6 +524,86 @@ function canGuesserReveal(player: PlayerDevice, currentTeam: Team): boolean {
 
 function canSpymasterAct(player: PlayerDevice, currentTeam: Team): boolean {
   return player.team === "both" || player.team === currentTeam;
+}
+
+function validateClueText(room: GameRoom, text: string): void {
+  const match = text.match(/^([а-яёa-z-]+)\s+(\d+)(?:\+\d+|\(\d+\))?$/iu);
+  if (!match) {
+    throw new GameError("Формат подсказки: слово 2, слово 2+1 или слово 2(1)");
+  }
+
+  const clueWord = normalizeClueWord(match[1] ?? "");
+  if (clueWord.length < 2) {
+    throw new GameError("Подсказка должна содержать слово");
+  }
+
+  const clueStem = clueRoot(clueWord);
+  for (const card of room.cards) {
+    const boardWord = normalizeClueWord(card.word);
+    if (clueWord === boardWord) {
+      throw new GameError(`Подсказка не может совпадать со словом на поле: ${card.word}`);
+    }
+    const boardStem = clueRoot(boardWord);
+    if (clueStem.length >= 4 && boardStem.length >= 4 && (clueStem.startsWith(boardStem) || boardStem.startsWith(clueStem))) {
+      throw new GameError(`Подсказка слишком близка к слову на поле: ${card.word}`);
+    }
+  }
+}
+
+function normalizeClueWord(value: string): string {
+  return value
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/[^а-яa-z-]/g, "")
+    .replace(/^-+|-+$/g, "");
+}
+
+function clueRoot(word: string): string {
+  const normalized = word.replace(/-/g, "");
+  const endings = [
+    "иями",
+    "ями",
+    "ами",
+    "ого",
+    "ему",
+    "ыми",
+    "ими",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "ый",
+    "ий",
+    "ой",
+    "ам",
+    "ям",
+    "ах",
+    "ях",
+    "ов",
+    "ев",
+    "ей",
+    "ом",
+    "ем",
+    "ой",
+    "ою",
+    "ею",
+    "а",
+    "я",
+    "о",
+    "е",
+    "ы",
+    "и",
+    "у",
+    "ю"
+  ];
+  for (const ending of endings) {
+    if (normalized.length - ending.length >= 4 && normalized.endsWith(ending)) {
+      return normalized.slice(0, -ending.length);
+    }
+  }
+  return normalized;
 }
 
 function requireStatus(room: GameRoom, statuses: RoomStatus[]): void {

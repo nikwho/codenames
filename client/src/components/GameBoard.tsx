@@ -41,7 +41,7 @@ export function GameBoard({ state, mode, interactive = true, onReveal }: GameBoa
             <CardTile
               key={card.id}
               card={card}
-              showKey={mode === "spymaster"}
+              mode={mode}
               disabled={!canReveal || card.revealed || isPending}
               holdToConfirmMs={state.settings.holdToConfirmMs}
               onReveal={() => {

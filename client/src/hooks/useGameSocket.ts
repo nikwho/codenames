@@ -23,6 +23,7 @@ export function useGameSocket(roomId: string) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const [nextRoomId, setNextRoomId] = useState<string | null>(null);
 
   const deviceId = useMemo(() => getDeviceId(), []);
 
@@ -65,6 +66,9 @@ export function useGameSocket(roomId: string) {
     socket.on("errorMessage", ({ message }) => {
       setError(message);
     });
+    socket.on("newGameCreated", ({ roomId: createdRoomId }) => {
+      setNextRoomId(createdRoomId);
+    });
 
     if (socket.connected) {
       onConnect();
@@ -79,6 +83,7 @@ export function useGameSocket(roomId: string) {
       socket.off("gameState");
       socket.off("timerTick");
       socket.off("errorMessage");
+      socket.off("newGameCreated");
     };
   }, [joinAs]);
 
@@ -87,6 +92,7 @@ export function useGameSocket(roomId: string) {
     connectionStatus,
     error,
     remainingSeconds,
+    nextRoomId,
     deviceId,
     joinAs,
     chooseTeam: (team: Team) => socket.emit("chooseTeam", { team }),
@@ -97,7 +103,11 @@ export function useGameSocket(roomId: string) {
     endGuessing: () => socket.emit("endGuessing"),
     pauseGame: () => socket.emit("pauseGame"),
     resumeGame: () => socket.emit("resumeGame"),
-    newGame: () => socket.emit("newGame"),
+    newGame: (onCreated?: (roomId: string) => void) =>
+      socket.emit("newGame", ({ roomId: createdRoomId }) => {
+        setNextRoomId(createdRoomId);
+        onCreated?.(createdRoomId);
+      }),
     restartRound: () => socket.emit("restartRound"),
     revealKeyAfterGame: () => socket.emit("revealKeyAfterGame"),
     resetPlayers: () => socket.emit("resetPlayers"),

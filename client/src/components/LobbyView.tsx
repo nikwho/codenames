@@ -68,10 +68,10 @@ export function LobbyView({ state, onChooseTeam, onChooseSpymasterTeam, onStartG
             <p className="mb-3 text-sm font-medium text-slate-200">Уже есть ведущий — выберите свою команду</p>
           )}
           {player?.role === "guesser" && !player.isBaseGuesser && (
-            <TeamSelect title="" onChoose={onChooseTeam} />
+            <TeamSelect title="" selectedTeam={player.team} onChoose={onChooseTeam} />
           )}
           {player?.role === "spymaster" && spymasters.length > 1 && (
-            <TeamSelect title="" onChoose={onChooseSpymasterTeam} />
+            <TeamSelect title="" selectedTeam={player.team} onChoose={onChooseSpymasterTeam} />
           )}
         </div>
 

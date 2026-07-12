@@ -28,6 +28,7 @@ export function TeamPanel({ state, team, compact = false, onEndGuessing }: TeamP
           players={state.players.filter(
             (playerItem) => playerItem.team === item || (playerItem.isBaseGuesser && item === state.currentTeam)
           )}
+          clues={state.clueHistory.filter((clue) => clue.team === item)}
           compact={compact}
         />
       ))}
@@ -46,6 +47,7 @@ function TeamRow({
   remaining,
   active,
   players,
+  clues,
   compact
 }: {
   name: string;
@@ -53,8 +55,11 @@ function TeamRow({
   remaining: number;
   active: boolean;
   players: SanitizedGameState["players"];
+  clues: SanitizedGameState["clueHistory"];
   compact: boolean;
 }) {
+  const visibleClues = compact ? clues.slice(0, 2) : clues;
+
   return (
     <div
       className={`rounded-2xl border p-3 sm:rounded-3xl sm:p-4 ${
@@ -87,12 +92,37 @@ function TeamRow({
         {active && <span className="rounded-full bg-white/12 px-2 py-1 text-[10px] font-black uppercase">ходит</span>}
       </div>
       {!compact && (
-        <div className="mt-4 space-y-2">
-          {players.slice(0, 4).map((entry) => (
-            <div key={entry.deviceId} className="rounded-xl bg-black/20 px-3 py-1.5 text-sm text-slate-200">
-              {entry.role === "spymaster" ? "♛ " : "♙ "}
-              {entry.name}
-              {entry.role === "spymaster" && <span className="ml-2 text-[10px] uppercase text-slate-500">ведущий</span>}
+        <div className="mt-4 space-y-4">
+          <div className="space-y-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Игроки</p>
+            {players.slice(0, 4).map((entry) => (
+              <div key={entry.deviceId} className="rounded-xl bg-black/20 px-3 py-1.5 text-sm text-slate-200">
+                {entry.role === "spymaster" ? "♛ " : "♙ "}
+                {entry.name}
+                {entry.role === "spymaster" && <span className="ml-2 text-[10px] uppercase text-slate-500">ведущий</span>}
+              </div>
+            ))}
+            {players.length === 0 && <p className="rounded-xl bg-black/15 px-3 py-2 text-xs text-slate-500">Нет игроков</p>}
+          </div>
+          <ClueHistory clues={visibleClues} compact={compact} />
+        </div>
+      )}
+      {compact && <ClueHistory clues={visibleClues} compact={compact} />}
+    </div>
+  );
+}
+
+function ClueHistory({ clues, compact }: { clues: SanitizedGameState["clueHistory"]; compact: boolean }) {
+  return (
+    <div className={compact ? "mt-3 space-y-1.5" : "space-y-2"}>
+      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Подсказки</p>
+      {clues.length === 0 ? (
+        <p className="rounded-xl bg-black/15 px-3 py-2 text-xs text-slate-500">Еще нет подсказок</p>
+      ) : (
+        <div className={compact ? "space-y-1.5" : "max-h-40 space-y-1.5 overflow-y-auto pr-1"}>
+          {clues.map((clue) => (
+            <div key={clue.id} className="rounded-xl bg-black/20 px-3 py-1.5 text-xs font-bold uppercase text-slate-200">
+              {clue.text}
             </div>
           ))}
         </div>

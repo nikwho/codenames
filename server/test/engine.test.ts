@@ -8,6 +8,7 @@ import {
   revealCard,
   sanitizeStateForPlayer,
   startGame,
+  startGuessingWithoutClue,
   submitClue
 } from "../src/engine/game.js";
 
@@ -140,6 +141,72 @@ describe("game engine", () => {
 
     expect(spymaster.team).toBe("both");
     expect(() => submitClue(room, "device", { text: "река 2" })).not.toThrow();
+  });
+
+  it("starts guessing without ending turn when clue timer expires", () => {
+    const room = startedRoom("red");
+
+    startGuessingWithoutClue(room);
+
+    expect(room.status).toBe("guessing_phase");
+    expect(room.currentTeam).toBe("red");
+    expect(room.currentClue).toBeNull();
+  });
+
+  it("allows one late clue during guessing if no clue was given yet", () => {
+    const room = startedRoom("red");
+    add(room, "spy", "spymaster");
+    startGuessingWithoutClue(room);
+
+    submitClue(room, "spy", { text: "река 2" });
+
+    expect(room.status).toBe("guessing_phase");
+    expect(room.currentClue?.text).toBe("река 2");
+    expect(room.currentClue?.team).toBe("red");
+    expect(room.clueHistory).toHaveLength(1);
+  });
+
+  it("rejects duplicate clues for the same turn", () => {
+    const room = startedRoom("red");
+    add(room, "spy", "spymaster");
+
+    submitClue(room, "spy", { text: "река 2" });
+
+    expect(() => submitClue(room, "spy", { text: "мост 1" })).toThrow(/уже задана/);
+  });
+
+  it("validates clue format", () => {
+    const room = startedRoom("red");
+    add(room, "spy", "spymaster");
+
+    expect(() => submitClue(room, "spy", { text: "река" })).toThrow(/Формат подсказки/);
+    expect(() => submitClue(room, "spy", { text: "валидатор 2+1" })).not.toThrow();
+  });
+
+  it("rejects clue matching a board word", () => {
+    const room = startedRoom("red");
+    add(room, "spy", "spymaster");
+    room.cards[0].word = "мост";
+
+    expect(() => submitClue(room, "spy", { text: "мост 2" })).toThrow(/совпадать/);
+  });
+
+  it("rejects clue close to a board word root", () => {
+    const room = startedRoom("red");
+    add(room, "spy", "spymaster");
+    room.cards[0].word = "машина";
+
+    expect(() => submitClue(room, "spy", { text: "машины 2" })).toThrow(/слишком близка/);
+  });
+
+  it("rejects late clue from the other team's spymaster", () => {
+    const room = startedRoom("red");
+    add(room, "red-spy", "spymaster");
+    add(room, "blue-spy", "spymaster");
+    chooseSpymasterTeam(room, "blue-spy", "blue");
+    startGuessingWithoutClue(room);
+
+    expect(() => submitClue(room, "blue-spy", { text: "мост 1" })).toThrow(/активную команду/);
   });
 
   it("base guesser is named table automatically", () => {

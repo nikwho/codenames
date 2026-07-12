@@ -19,7 +19,6 @@ import {
   GameError,
   isBaseAdmin,
   markDisconnected,
-  newGame,
   pauseGame,
   requireAdmin,
   restartRound,
@@ -67,11 +66,54 @@ function loadEnvFile(filePath: string): void {
 loadEnvFile(resolve(process.cwd(), ".env"));
 
 const PORT = Number(process.env.PORT ?? 3001);
+const HOST = process.env.HOST ?? "0.0.0.0";
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? "http://localhost:5173";
 const startedAt = Date.now();
 
+const allowedOrigins = CLIENT_ORIGIN.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function isPrivateLanHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname)
+  );
+}
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) {
+    return true;
+  }
+  if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+  try {
+    return isPrivateLanHost(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked origin: ${origin}`));
+    }
+  },
+  methods: ["GET", "POST"]
+};
+
 const app = express();
-app.use(cors({ origin: CLIENT_ORIGIN }));
+app.use(cors(corsOptions));
 
 function health(_req: Request, res: Response): void {
   res.json({
@@ -87,10 +129,7 @@ app.get("/api/health", health);
 const httpServer = createServer(app);
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   path: "/socket.io/",
-  cors: {
-    origin: CLIENT_ORIGIN,
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
 
 const roomStore = new RoomStore(
@@ -213,10 +252,13 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("newGame", () => {
+  socket.on("newGame", (ack) => {
     withAdminRoom(socket, (room) => {
-      newGame(room);
-      broadcastGameState(room);
+      const nextRoom = roomStore.createContinuationRoom(room);
+      moveSocketsToRoom(room.roomId, nextRoom);
+      io.to(nextRoom.roomId).emit("newGameCreated", { roomId: nextRoom.roomId });
+      broadcastGameState(nextRoom);
+      ack?.({ roomId: nextRoom.roomId });
     });
   });
 
@@ -259,8 +301,11 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Codenames server listening on http://localhost:${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Codenames server listening on http://${HOST}:${PORT}`);
+  if (HOST === "0.0.0.0") {
+    console.log(`  LAN clients: http://<this-machine-ip>:${PORT}`);
+  }
 });
 
 function withAdminRoom(socket: ServerSocket, callback: (room: GameRoom, deviceId: string) => void): void {
@@ -305,6 +350,24 @@ function broadcastGameState(room: GameRoom): void {
     }
     emitGameState(roomSocket, room);
     roomSocket.emit("actionLogUpdated", { actionLog: room.actionLog });
+  }
+}
+
+function moveSocketsToRoom(previousRoomId: string, nextRoom: GameRoom): void {
+  const socketIds = io.sockets.adapter.rooms.get(previousRoomId);
+  if (!socketIds) {
+    return;
+  }
+
+  for (const socketId of [...socketIds]) {
+    const roomSocket = io.sockets.sockets.get(socketId) as ServerSocket | undefined;
+    if (!roomSocket) {
+      continue;
+    }
+    roomSocket.leave(previousRoomId);
+    roomSocket.join(nextRoom.roomId);
+    roomSocket.data.roomId = nextRoom.roomId;
+    roomSocket.data.displayView = "lobby";
   }
 }
 

@@ -36,7 +36,9 @@ export interface PlayerDevice {
 }
 
 export interface Clue {
+  id: string;
   text: string;
+  team: Team;
   givenByDeviceId: string;
   givenAt: number;
 }
@@ -89,6 +91,7 @@ export interface GameRoom {
   teams: Record<Team, { remaining: number }>;
   currentTeam: Team;
   currentClue: Clue | null;
+  clueHistory: Clue[];
   timers: Timers;
   players: PlayerDevice[];
   settings: Settings;
@@ -146,6 +149,10 @@ export interface RoomCreatedPayload {
   roomId: string;
 }
 
+export interface NewGamePayload {
+  roomId: string;
+}
+
 export interface ErrorMessagePayload {
   message: string;
 }
@@ -162,7 +169,7 @@ export interface ClientToServerEvents {
   updateSettings: (payload: UpdateSettingsPayload) => void;
   pauseGame: () => void;
   resumeGame: () => void;
-  newGame: () => void;
+  newGame: (ack?: (payload: NewGamePayload) => void) => void;
   restartRound: () => void;
   revealKeyAfterGame: () => void;
   resetPlayers: () => void;
@@ -171,6 +178,7 @@ export interface ClientToServerEvents {
 
 export interface ServerToClientEvents {
   roomCreated: (payload: RoomCreatedPayload) => void;
+  newGameCreated: (payload: NewGamePayload) => void;
   gameState: (payload: { stateForCurrentPlayer: SanitizedGameState }) => void;
   playerJoined: (payload: { player: PlayerDevice }) => void;
   playerUpdated: (payload: { player: PlayerDevice }) => void;

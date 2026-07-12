@@ -2,12 +2,10 @@ import { useEffect, useState } from "react";
 import type { DisplayView, SanitizedGameState } from "@codenames/shared";
 import { AdminPanel } from "../components/AdminPanel";
 import { ActionLog } from "../components/ActionLog";
-import { CluePanel } from "../components/CluePanel";
 import { GameBoard } from "../components/GameBoard";
 import { LobbyView } from "../components/LobbyView";
 import { RoleSelect } from "../components/RoleSelect";
 import { SpymasterClueInput } from "../components/SpymasterClueInput";
-import { TeamPanel } from "../components/TeamPanel";
 import { TimerBar } from "../components/TimerBar";
 import { useGameSocket } from "../hooks/useGameSocket";
 
@@ -22,6 +20,12 @@ export function RoomPage({ roomId, navigate }: RoomPageProps) {
   const player = state?.currentPlayer ?? null;
   const [displayView, setDisplayView] = useState<DisplayView>("lobby");
   const [scenesOpen, setScenesOpen] = useState(true);
+
+  useEffect(() => {
+    if (game.nextRoomId && game.nextRoomId !== roomId) {
+      navigate(`/room/${game.nextRoomId}`);
+    }
+  }, [game.nextRoomId, navigate, roomId]);
 
   useEffect(() => {
     if (!state) {
@@ -135,7 +139,7 @@ export function RoomPage({ roomId, navigate }: RoomPageProps) {
               startGame: game.startGame,
               pauseGame: game.pauseGame,
               resumeGame: game.resumeGame,
-              newGame: game.newGame,
+              newGame: () => game.newGame(),
               restartRound: game.restartRound,
               revealKeyAfterGame: game.revealKeyAfterGame,
               resetPlayers: game.resetPlayers,
@@ -166,6 +170,16 @@ function GameView({
   if (displayView === "lobby" || state.status === "lobby") {
     return (
       <div className="space-y-4">
+        {state.currentPlayer?.isBaseGuesser && (
+          <AdminPanel
+            state={state}
+            onPauseGame={actions.pauseGame}
+            onResumeGame={actions.resumeGame}
+            onNewGame={actions.newGame}
+            onRestartRound={actions.restartRound}
+            onUpdateSettings={actions.updateSettings}
+          />
+        )}
         <RoleSelect currentPlayer={state.currentPlayer} onJoin={actions.joinAs} />
         <LobbyView
           state={state}
@@ -181,22 +195,9 @@ function GameView({
     return (
       <div className="space-y-3 sm:space-y-4">
         <TimerBar state={state} remainingSeconds={remainingSeconds} />
-        <div className="grid grid-cols-2 gap-3 lg:hidden">
-          <TeamPanel state={state} team="red" compact onEndGuessing={actions.endGuessing} />
-          <TeamPanel state={state} team="blue" compact onEndGuessing={actions.endGuessing} />
-        </div>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,320px)]">
-          <section className="min-w-0 space-y-3 sm:space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-300 sm:px-4 sm:py-3">
-              Режим загадывающего — виден весь ключ
-            </div>
-            <GameBoard state={state} mode="spymaster" interactive={false} onReveal={actions.revealCard} />
-          </section>
-          <aside className="min-w-0 space-y-3 sm:space-y-4">
-            <SpymasterClueInput state={state} onSubmit={actions.submitClue} />
-            <ActionLog items={state.actionLog} />
-          </aside>
-        </div>
+        <SpymasterClueInput state={state} onSubmit={actions.submitClue} />
+        <GameBoard state={state} mode="spymaster" interactive={false} onReveal={actions.revealCard} />
+        {state.settings.showActionLog && <ActionLog items={state.actionLog} />}
       </div>
     );
   }
@@ -206,17 +207,14 @@ function GameView({
       <div className="space-y-3 sm:space-y-4">
         <AdminPanel
           state={state}
-          onStartGame={actions.startGame}
           onPauseGame={actions.pauseGame}
           onResumeGame={actions.resumeGame}
           onNewGame={actions.newGame}
           onRestartRound={actions.restartRound}
-          onRevealKeyAfterGame={actions.revealKeyAfterGame}
-          onResetPlayers={actions.resetPlayers}
           onUpdateSettings={actions.updateSettings}
         />
         <TimerBar state={state} remainingSeconds={remainingSeconds} />
-        <BoardWithTeams
+        <BoardOnly
           state={state}
           boardMode={state.keyRevealed ? "spymaster" : "guesser"}
           onReveal={actions.revealCard}
@@ -230,13 +228,13 @@ function GameView({
   return (
     <div className="space-y-3 sm:space-y-4">
       <TimerBar state={state} remainingSeconds={remainingSeconds} />
-      <BoardWithTeams state={state} boardMode="guesser" onReveal={actions.revealCard} onEndGuessing={actions.endGuessing} />
+      <BoardOnly state={state} boardMode="guesser" onReveal={actions.revealCard} onEndGuessing={actions.endGuessing} />
       {state.settings.showActionLog && <ActionLog items={state.actionLog} />}
     </div>
   );
 }
 
-function BoardWithTeams({
+function BoardOnly({
   state,
   boardMode,
   onReveal,
@@ -253,29 +251,13 @@ function BoardWithTeams({
     (state.currentPlayer.isBaseGuesser || state.currentPlayer.team === state.currentTeam);
 
   return (
-    <div className="space-y-3 sm:space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:hidden">
-        <TeamPanel state={state} team="red" compact onEndGuessing={onEndGuessing} />
-        <TeamPanel state={state} team="blue" compact onEndGuessing={onEndGuessing} />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(180px,1fr)_minmax(0,3fr)_minmax(180px,1fr)]">
-        <div className="hidden lg:block">
-          <TeamPanel state={state} team="red" onEndGuessing={onEndGuessing} />
-        </div>
-        <div className="min-w-0 space-y-3 sm:space-y-4">
-          <GameBoard state={state} mode={boardMode} interactive onReveal={onReveal} />
-          <CluePanel state={state} />
-          {canEnd && (
-            <button className="btn-secondary w-full" onClick={onEndGuessing}>
-              Завершить отгадывание
-            </button>
-          )}
-        </div>
-        <div className="hidden lg:block">
-          <TeamPanel state={state} team="blue" onEndGuessing={onEndGuessing} />
-        </div>
-      </div>
+    <div className="mx-auto w-full max-w-4xl space-y-3 sm:space-y-4">
+      <GameBoard state={state} mode={boardMode} interactive onReveal={onReveal} />
+      {canEnd && (
+        <button className="btn-secondary w-full" onClick={onEndGuessing}>
+          Завершить отгадывание
+        </button>
+      )}
     </div>
   );
 }
