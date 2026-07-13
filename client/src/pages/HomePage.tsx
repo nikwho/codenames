@@ -18,7 +18,10 @@ export function HomePage({ navigate }: HomePageProps) {
   };
 
   const createRoom = () => {
-    persistProfile();
+    setStoredName(name);
+    // Creator always joins as the table/admin device.
+    setStoredRole("guesser");
+    setRole("guesser");
     setIsCreating(true);
     if (!socket.connected) {
       socket.connect();
@@ -75,11 +78,10 @@ export function HomePage({ navigate }: HomePageProps) {
               className="field mt-2 h-12 w-full"
             />
             <p className="mt-5 text-xs uppercase tracking-[0.24em] text-slate-500">Выберите роль</p>
-            <div className="mt-2 grid grid-cols-3 gap-2">
+            <div className="mt-2 grid grid-cols-2 gap-2">
               {[
                 ["guesser", "Отгадываю", "Открываю карточки"],
-                ["spymaster", "Загадываю", "Даю подсказки"],
-                ["spectator", "Наблюдатель", "Просто смотрю"]
+                ["spymaster", "Загадываю", "Даю подсказки"]
               ].map(([value, label, hint]) => (
                 <button
                   key={value}

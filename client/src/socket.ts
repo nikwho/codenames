@@ -59,7 +59,7 @@ export function setStoredName(name: string): void {
 
 export function getStoredRole(): PlayerRole {
   const role = localStorage.getItem(ROLE_KEY);
-  if (role === "spymaster" || role === "spectator" || role === "guesser") {
+  if (role === "spymaster" || role === "guesser") {
     return role;
   }
   return "guesser";

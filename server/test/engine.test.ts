@@ -90,17 +90,15 @@ describe("game engine", () => {
 
   it("allows base guesser to reveal in either team's turn", () => {
     const room = guessingRoom("blue");
-    add(room, "base", "guesser");
 
-    expect(() => revealCard(room, "base", room.cards[0].id)).not.toThrow();
+    expect(() => revealCard(room, "table", room.cards[0].id)).not.toThrow();
   });
 
   it("ends game when assassin is revealed", () => {
     const room = guessingRoom("red");
-    add(room, "base", "guesser");
     const assassin = room.cards.find((card) => card.type === "assassin");
 
-    revealCard(room, "base", assassin!.id);
+    revealCard(room, "table", assassin!.id);
 
     expect(room.status).toBe("game_over");
     expect(room.winner).toBe("blue");
@@ -108,13 +106,12 @@ describe("game engine", () => {
 
   it("wins when all team's cards are revealed", () => {
     const room = guessingRoom("red");
-    add(room, "base", "guesser");
     const redCards = room.cards.filter((card) => card.type === "red");
     for (const card of redCards.slice(0, -1)) {
       card.revealed = true;
     }
 
-    revealCard(room, "base", redCards.at(-1)!.id);
+    revealCard(room, "table", redCards.at(-1)!.id);
 
     expect(room.status).toBe("game_over");
     expect(room.winner).toBe("red");
@@ -122,6 +119,7 @@ describe("game engine", () => {
 
   it("locks first spymaster to opposite team when second chooses a team", () => {
     const room = createGame();
+    add(room, "table", "guesser");
     add(room, "spy-1", "spymaster");
     add(room, "spy-2", "spymaster");
 
@@ -209,18 +207,28 @@ describe("game engine", () => {
     expect(() => submitClue(room, "blue-spy", { text: "мост 1" })).toThrow(/активную команду/);
   });
 
-  it("base guesser is named table automatically", () => {
+  it("base guesser keeps a custom name and table flag", () => {
     const room = createGame();
     const player = add(room, "first", "guesser", "Alice");
 
-    expect(player.name).toBe("Стол");
+    expect(player.name).toBe("Alice");
     expect(player.isBaseGuesser).toBe(true);
     expect(player.team).toBe("both");
+  });
+
+  it("makes the first joining device the table even if a non-guesser role was requested", () => {
+    const room = createGame();
+    const player = add(room, "creator", "spymaster", "Host");
+
+    expect(player.role).toBe("guesser");
+    expect(player.isBaseGuesser).toBe(true);
+    expect(player.name).toBe("Host");
   });
 });
 
 function startedRoom(startingTeam: Team = "red"): GameRoom {
   const room = createGame({ startingTeam }, "TEST");
+  add(room, "table", "guesser");
   startGame(room);
   return room;
 }

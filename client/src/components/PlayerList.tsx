@@ -15,8 +15,13 @@ export function PlayerList({ players }: PlayerListProps) {
         {players.map((player) => (
           <div key={player.deviceId} className="flex items-center justify-between gap-3 rounded-2xl bg-black/20 px-3 py-2.5 sm:px-4 sm:py-3">
             <div className="min-w-0">
-              <p className="truncate font-semibold">
-                {player.name} {player.isBaseGuesser ? "· Стол" : ""}
+              <p className="flex min-w-0 flex-wrap items-center gap-2 font-semibold">
+                <span className="truncate">{player.name}</span>
+                {player.isBaseGuesser && (
+                  <span className="rounded-full bg-[var(--primary)] px-2 py-0.5 text-[10px] font-black uppercase text-[#2f2411]">
+                    Администратор
+                  </span>
+                )}
               </p>
               <p className="text-xs text-slate-400">
                 {roleLabel(player.role)} · {teamLabel(player.team)}
@@ -34,7 +39,6 @@ export function PlayerList({ players }: PlayerListProps) {
 
 function roleLabel(role: PlayerDevice["role"]): string {
   if (role === "spymaster") return "загад.";
-  if (role === "spectator") return "наблюд.";
   return "отгад.";
 }
 

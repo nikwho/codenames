@@ -72,31 +72,40 @@ export function createContinuationGame(source: GameRoom, roomId = generateRoomId
 }
 
 export function addPlayer(room: GameRoom, payload: JoinRoomPayload): PlayerDevice {
-  if (payload.role === "spectator" && !room.settings.allowSpectators) {
-    throw new GameError("Наблюдатели отключены в настройках комнаты");
+  if (payload.role === "spectator") {
+    throw new GameError("Роль наблюдателя отключена");
   }
 
   const now = Date.now();
   const existing = findPlayer(room, payload.deviceId);
   if (existing) {
     const previousRole = existing.role;
-    existing.name = normalizeName(payload.name, existing.name);
-    if (payload.role === "spymaster" && previousRole !== "spymaster" && getSpymasters(room).length >= room.settings.maxSpymasters) {
+    const requestedRole = payload.role;
+    if (requestedRole === "spymaster" && previousRole !== "spymaster" && getSpymasters(room).length >= room.settings.maxSpymasters) {
       throw new GameError(`Максимум загадывающих: ${room.settings.maxSpymasters}`);
     }
-    existing.role = payload.role;
+    existing.name = normalizeName(payload.name, existing.name);
+    existing.role = requestedRole;
     existing.connected = true;
     existing.lastSeenAt = now;
-    if (payload.role === "guesser" && !existing.isBaseGuesser && existing.team === "both") {
-      existing.team = null;
-    }
-    if (payload.role === "spectator") {
-      existing.team = null;
+
+    if (requestedRole === "guesser") {
+      const hasOtherBase = room.players.some(
+        (player) => player.deviceId !== existing.deviceId && player.isBaseGuesser
+      );
+      if (!hasOtherBase) {
+        existing.isBaseGuesser = true;
+        existing.team = "both";
+      } else if (existing.isBaseGuesser) {
+        existing.team = "both";
+      } else if (existing.team === "both") {
+        existing.team = null;
+      }
+    } else {
       existing.isBaseGuesser = false;
     }
-    if (payload.role === "spymaster") {
-      normalizeSpymasterAssignments(room);
-    } else if (previousRole === "spymaster") {
+
+    if (requestedRole === "spymaster" || previousRole === "spymaster") {
       normalizeSpymasterAssignments(room);
     }
     touch(room);
@@ -108,14 +117,18 @@ export function addPlayer(room: GameRoom, payload: JoinRoomPayload): PlayerDevic
     throw new GameError(`Максимум загадывающих: ${room.settings.maxSpymasters}`);
   }
 
+  // First device in an empty room always becomes the table/admin guesser.
+  const isFirstPlayer = room.players.length === 0;
+  const role = isFirstPlayer ? "guesser" : payload.role;
   const isBaseGuesser =
-    payload.role === "guesser" && !room.players.some((player) => player.role === "guesser" && player.isBaseGuesser);
+    isFirstPlayer ||
+    (role === "guesser" && !room.players.some((player) => player.isBaseGuesser));
 
   const player: PlayerDevice = {
     deviceId: payload.deviceId,
-    name: isBaseGuesser ? "Стол" : normalizeName(payload.name, defaultName(payload.role)),
-    role: payload.role,
-    team: getInitialTeam(room, payload.role, isBaseGuesser),
+    name: normalizeName(payload.name, isBaseGuesser ? "Стол" : defaultName(role)),
+    role,
+    team: getInitialTeam(room, role, isBaseGuesser),
     isBaseGuesser,
     connected: true,
     joinedAt: now,
