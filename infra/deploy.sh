@@ -123,7 +123,7 @@ if [[ -d "${RELEASE_DIR}/infra" ]]; then
       install -m 644 "${RELEASE_DIR}/infra/${tpl}" "${APP_DIR}/${tpl}"
     fi
   done
-  for script in render-nginx.sh setup-https-ip.sh; do
+  for script in render-nginx.sh setup-nginx.sh setup-https-ip.sh; do
     if [[ -f "${RELEASE_DIR}/infra/${script}" ]]; then
       install -m 755 "${RELEASE_DIR}/infra/${script}" "${APP_DIR}/${script}"
     fi

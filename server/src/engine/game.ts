@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  WORD_THEMES,
   type Card,
   type CardType,
   type Clue,
@@ -10,7 +11,9 @@ import {
   type SanitizedGameState,
   type Settings,
   type SubmitCluePayload,
-  type Team
+  type Team,
+  type WordDifficulty,
+  type WordTheme
 } from "@codenames/shared";
 import { pickWords } from "../words.ru.js";
 
@@ -503,7 +506,11 @@ function generateCards(settings: Settings, cardCounts: Record<Team, number>): Ca
     throw new GameError("Сумма карточек в настройках должна совпадать с размером поля");
   }
 
-  const words = pickWords(settings.boardSize);
+  const words = pickWords(settings.boardSize, {
+    difficulty: settings.wordDifficulty,
+    includeAdult: settings.includeAdultWords,
+    themes: settings.wordThemes
+  });
   const types: CardType[] = [
     ...Array.from<CardType>({ length: cardCounts.red }).fill("red"),
     ...Array.from<CardType>({ length: cardCounts.blue }).fill("blue"),
@@ -670,8 +677,26 @@ function normalizeSettings(settings: Settings): Settings {
     clueSeconds: Number(settings.clueSeconds),
     guessingSeconds: Number(settings.guessingSeconds),
     maxSpymasters: Number(settings.maxSpymasters),
-    holdToConfirmMs: Number(settings.holdToConfirmMs)
+    holdToConfirmMs: Number(settings.holdToConfirmMs),
+    wordDifficulty: normalizeWordDifficulty(settings.wordDifficulty),
+    includeAdultWords: Boolean(settings.includeAdultWords),
+    wordThemes: normalizeWordThemes(settings.wordThemes)
   };
+}
+
+function normalizeWordDifficulty(value: Settings["wordDifficulty"] | undefined): WordDifficulty {
+  if (value === "easy" || value === "standard" || value === "advanced") {
+    return value;
+  }
+  return DEFAULT_SETTINGS.wordDifficulty;
+}
+
+function normalizeWordThemes(value: Settings["wordThemes"] | undefined): WordTheme[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const allowed = new Set<string>(WORD_THEMES);
+  return [...new Set(value.filter((theme): theme is WordTheme => allowed.has(theme)))];
 }
 
 function normalizeName(name: string, fallback: string): string {

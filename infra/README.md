@@ -8,6 +8,8 @@ Bash-based release flow for this monorepo:
 | `server/` | Express + Socket.IO backend → build to `server/dist/index.js` |
 | `shared/` | TypeScript package compiled for Node |
 
+**Public URL:** the production client is built with Vite `base: /codenames/`. Nginx serves the app at `https://YOUR_DOMAIN/codenames/`. Local `npm run dev` still uses `/` (no prefix).
+
 Layout on the server:
 
 ```text
@@ -18,6 +20,9 @@ Layout on the server:
   shared/logs/
   deploy.sh
   rollback.sh
+  setup-nginx.sh
+  render-nginx.sh
+  ...
 ```
 
 ## Prerequisites
@@ -34,8 +39,8 @@ Copy this repo to the server temporarily (or clone it once as root), then:
 ```bash
 ssh root@server
 cd /path/to/codenames   # directory that contains infra/
-# Domain:
-APP_NAME=codenames DOMAIN=your-domain.com bash infra/bootstrap-vps.sh
+# Domain (app at https://partyprotocol.ru/codenames/):
+APP_NAME=codenames DOMAIN=partyprotocol.ru bash infra/bootstrap-vps.sh
 # Or public IP only:
 APP_NAME=codenames DOMAIN=203.0.113.10 bash infra/bootstrap-vps.sh
 ```
@@ -46,18 +51,31 @@ Useful overrides:
 APP_NAME=codenames \
 APP_USER=deploy \
 APP_DIR=/var/www/codenames \
-DOMAIN=your-domain.com \
+DOMAIN=partyprotocol.ru \
+APP_BASE_PATH=/codenames \
 NODE_MAJOR=22 \
 APP_PORT=3001 \
 bash infra/bootstrap-vps.sh
 ```
+
 What bootstrap does:
 
 - installs Node.js, nginx, UFW, fail2ban, PM2
 - creates `deploy` user and `/var/www/codenames/{releases,shared,shared/logs}`
 - writes a **placeholder** `shared/.env` only if missing
-- installs nginx site from `nginx.conf.template`
+- installs nginx via `setup-nginx.sh` (app under `APP_BASE_PATH`, default `/codenames`)
 - does **not** clone production code or overwrite secrets / releases
+
+### Nginx only (refresh / shared vhost)
+
+```bash
+# Full site for this domain (default):
+DOMAIN=partyprotocol.ru bash /var/www/codenames/setup-nginx.sh
+
+# Only write the app snippet to include in an existing server { } block:
+DOMAIN=partyprotocol.ru MODE=snippet bash /var/www/codenames/setup-nginx.sh
+# then add:  include /etc/nginx/snippets/codenames-app.conf;
+```
 
 ## 2. Configure environment
 
@@ -70,10 +88,10 @@ Expected keys (example):
 ```bash
 NODE_ENV=production
 PORT=3001
-CLIENT_ORIGIN=https://your-domain.com
+CLIENT_ORIGIN=https://partyprotocol.ru
 ```
 
-`CLIENT_ORIGIN` must match the public site origin (used for Express CORS and Socket.IO CORS).
+`CLIENT_ORIGIN` must match the public site **origin** (scheme + host, **no** `/codenames` path). Used for Express CORS and Socket.IO CORS.
 
 The deploy script symlinks this file to `$RELEASE/server/.env`. Real secrets must never be committed to git (`.env` is already gitignored).
 
@@ -83,6 +101,8 @@ On the VPS as `deploy`:
 
 ```bash
 ssh deploy@server
+# or, once DNS points here:
+ssh deploy@partyprotocol.ru
 ssh-keygen -t ed25519 -C "codenames-deploy" -f ~/.ssh/id_ed25519 -N ""
 cat ~/.ssh/id_ed25519.pub
 ```
@@ -123,7 +143,7 @@ Deploy flow:
 1. Create `releases/YYYYMMDD_HHMMSS`
 2. `git clone --depth 1`
 3. `npm ci` (workspaces root)
-4. Build `shared` → `server` → `client`
+4. Build `shared` → `server` → `client` (client with `base: /codenames/`)
 5. Symlink `shared/.env` → `server/.env`
 6. Atomically point `current` at the new release
 7. `pm2 startOrReload ecosystem.config.cjs --update-env`
@@ -158,9 +178,9 @@ Backend (direct / via nginx):
 
 ```bash
 curl http://127.0.0.1:3001/api/health
-curl https://your-domain.com/api/health
+curl https://partyprotocol.ru/codenames/api/health
 # IP-only:
-curl https://203.0.113.10/api/health
+curl https://203.0.113.10/codenames/api/health
 ```
 
 Expected JSON shape:
@@ -175,10 +195,18 @@ Expected JSON shape:
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
+sudo certbot --nginx -d partyprotocol.ru
 ```
 
-Certbot will extend the nginx site for TLS. Re-run bootstrap carefully if you need to regenerate the HTTP template — prefer editing the live site or re-applying certbot after template changes.
+Certbot will extend the nginx site for TLS. If locations under `/codenames` look wrong after certbot, re-apply:
+
+```bash
+DOMAIN=partyprotocol.ru \
+SSL_MODE=https \
+SSL_CERT_PATH=/etc/letsencrypt/live/partyprotocol.ru/fullchain.pem \
+SSL_KEY_PATH=/etc/letsencrypt/live/partyprotocol.ru/privkey.pem \
+bash /var/www/codenames/setup-nginx.sh
+```
 
 ### 8b. Public IP only (no domain)
 
@@ -213,7 +241,7 @@ su - deploy -c 'cd /var/www/codenames && pm2 startOrReload ecosystem.config.cjs 
 
 - install Certbot via snap if the system package is too old
 - obtain a certificate with `--webroot` + `--ip-address` + `--preferred-profile shortlived`
-- switch nginx to HTTP (ACME + redirect) + HTTPS (app)
+- switch nginx to HTTP (ACME + redirect) + HTTPS (app under `/codenames`)
 - set `CLIENT_ORIGIN=https://YOUR_IP` in `shared/.env`
 
 Renewal is handled by `certbot.timer` (twice daily). A deploy-hook reloads nginx after each renewal.
@@ -222,15 +250,15 @@ Renewal is handled by `certbot.timer` (twice daily). A deploy-hook reloads nginx
 
 - Until step 3 completes, use `CLIENT_ORIGIN=http://YOUR_IP` (bootstrap sets this for IP hosts).
 - Certificate lifetime is ~6 days (LE policy for IP addresses).
-- `curl https://YOUR_IP/api/health` should work without `-k` after a production cert is issued.
+- `curl https://YOUR_IP/codenames/api/health` should work without `-k` after a production cert is issued.
 
 ## 9. End-to-end flow
 
 ```text
 local fix → git commit → git push
-  → ssh deploy@server
+  → ssh deploy@partyprotocol.ru
   → REPO=... BRANCH=main bash /var/www/codenames/deploy.sh
-  → curl https://your-domain.com/api/health + pm2 logs
+  → curl https://partyprotocol.ru/codenames/api/health + pm2 logs
   → bash /var/www/codenames/rollback.sh   # if needed
 ```
 
@@ -238,22 +266,29 @@ local fix → git commit → git push
 
 | Location | Target |
 |----------|--------|
-| `/` | static React from `current/client/dist` (`try_files … /index.html`) |
-| `/api/` | `http://127.0.0.1:3001` |
-| `/socket.io/` | same backend with WebSocket upgrade headers |
+| `/` | redirect → `/codenames/` |
+| `/codenames/` | static React from `current/client/dist` (SPA fallback) |
+| `/codenames/api/` | `http://127.0.0.1:3001/api/` |
+| `/codenames/socket.io/` | same backend `/socket.io/` with WebSocket upgrade |
+| `/codenames/health` | proxied `GET /api/health` |
 
 PM2 runs **one** fork instance (`codenames-api`) — required for Socket.IO without sticky sessions.
+
+Override mount path with `APP_BASE_PATH` (must match Vite `base` in production; default `/codenames`).
 
 ## Project paths used by scripts (verify if you rename packages)
 
 | Item | Value |
-|------|--------|
+|------|------|
 | Frontend app | `client/` |
 | Frontend build out | `client/dist` |
+| Frontend Vite base (prod) | `/codenames/` |
 | Backend app | `server/` |
 | Backend entry | `server/dist/index.js` (`npm start` → `node dist/index.js`) |
 | Shared package | `shared/` (must build before server) |
-| Socket.IO path | `/socket.io/` |
-| Health | `GET /api/health` (also `/health`) |
+| Socket.IO path (Node) | `/socket.io/` |
+| Socket.IO path (browser prod) | `/codenames/socket.io` |
+| Health (Node) | `GET /api/health` (also `/health`) |
+| Health (public) | `GET /codenames/api/health` |
 
-Frontend Socket.IO client connects to the **same origin** in production (`/` + `path: "/socket.io"`). For local Vite (`npm run dev`) it still defaults to `http://localhost:3001`. Override with `VITE_SERVER_URL` if needed.
+Frontend Socket.IO client connects to the **same origin** in production (`path: "/codenames/socket.io"`). For local Vite (`npm run dev`) it still uses `http://localhost:3001` and `path: "/socket.io"`. Override with `VITE_SERVER_URL` if needed.

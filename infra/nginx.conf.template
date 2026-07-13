@@ -1,5 +1,5 @@
 # Placeholders replaced by render-nginx.sh (SSL_MODE=http):
-#   {{DOMAIN}} {{APP_DIR}} {{APP_PORT}} {{FRONTEND_DIST_PATH}} {{ACME_WEBROOT}} {{APP_NAME}}
+#   {{DOMAIN}} {{APP_DIR}} {{APP_PORT}} {{FRONTEND_DIST_PATH}} {{ACME_WEBROOT}} {{APP_NAME}} {{APP_BASE_PATH}}
 
 upstream codenames_backend {
     server 127.0.0.1:{{APP_PORT}};
@@ -14,6 +14,8 @@ server {
     access_log /var/log/nginx/{{DOMAIN}}.access.log;
     error_log  /var/log/nginx/{{DOMAIN}}.error.log;
 
+    client_max_body_size 8m;
+
     # Let's Encrypt http-01 (required for IP certificate issue + renewal)
     location ^~ /.well-known/acme-challenge/ {
         root {{ACME_WEBROOT}};
@@ -21,4 +23,9 @@ server {
     }
 
     include /etc/nginx/snippets/{{APP_NAME}}-app.conf;
+
+    # Root is free for other sites/apps on this host; game lives under {{APP_BASE_PATH}}
+    location = / {
+        return 302 {{APP_BASE_PATH}}/;
+    }
 }

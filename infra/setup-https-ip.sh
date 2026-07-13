@@ -16,9 +16,15 @@ APP_NAME="${APP_NAME:-codenames}"
 APP_DIR="${APP_DIR:-/var/www/${APP_NAME}}"
 DOMAIN="${DOMAIN:-}"
 APP_PORT="${APP_PORT:-3001}"
+APP_BASE_PATH="${APP_BASE_PATH:-/codenames}"
 ACME_WEBROOT="${ACME_WEBROOT:-/var/www/acme}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 CERTBOT_STAGING="${CERTBOT_STAGING:-0}"
+
+if [[ "${APP_BASE_PATH}" != "/" ]]; then
+  APP_BASE_PATH="/${APP_BASE_PATH#/}"
+  APP_BASE_PATH="${APP_BASE_PATH%/}"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RENDER_SCRIPT="${SCRIPT_DIR}/render-nginx.sh"
@@ -143,7 +149,7 @@ if [[ ! -f "${SSL_CERT_PATH}" || ! -f "${SSL_KEY_PATH}" ]]; then
   exit 1
 fi
 
-export APP_NAME APP_DIR DOMAIN APP_PORT ACME_WEBROOT SSL_CERT_PATH SSL_KEY_PATH SSL_MODE=https
+export APP_NAME APP_DIR DOMAIN APP_PORT APP_BASE_PATH ACME_WEBROOT SSL_CERT_PATH SSL_KEY_PATH SSL_MODE=https
 bash "${RENDER_SCRIPT}"
 
 ln -sfn "${NGINX_SITE}" "${NGINX_ENABLED}"
@@ -166,9 +172,9 @@ if [[ -f "${SHARED_ENV}" ]]; then
 fi
 
 echo
-echo "==> HTTPS enabled for https://${DOMAIN}/"
+echo "==> HTTPS enabled for https://${DOMAIN}${APP_BASE_PATH}/"
 echo "    Certificate lifetime is ~6 days; certbot.timer renews automatically."
-echo "    Test: curl -fsS https://${DOMAIN}/api/health"
+echo "    Test: curl -fsS https://${DOMAIN}${APP_BASE_PATH}/api/health"
 if [[ "${CERTBOT_STAGING}" == "1" ]]; then
   echo "    STAGING cert is not browser-trusted — re-run without CERTBOT_STAGING=1 for production."
 fi

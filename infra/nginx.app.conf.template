@@ -1,44 +1,55 @@
-    root {{FRONTEND_DIST_PATH}};
-    index index.html;
+# Application locations under {{APP_BASE_PATH}} (default /codenames).
+# Placeholders: {{APP_BASE_PATH}} {{APP_PORT}} {{FRONTEND_DIST_PATH}} {{APP_NAME}}
+#
+# Backend keeps /api and /socket.io at the Node process; nginx strips the prefix.
 
-    client_max_body_size 8m;
+# /codenames → /codenames/
+location = {{APP_BASE_PATH}} {
+    return 301 {{APP_BASE_PATH}}/;
+}
 
-    # React SPA (Vite build) — client-side routes
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
+location {{APP_BASE_PATH}}/api/ {
+    proxy_pass http://codenames_backend/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 60s;
+    proxy_send_timeout 60s;
+}
 
-    # Express API (and future REST routes)
-    location /api/ {
-        proxy_pass http://codenames_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 10s;
-        proxy_read_timeout 60s;
-        proxy_send_timeout 60s;
-    }
+location {{APP_BASE_PATH}}/socket.io/ {
+    proxy_pass http://codenames_backend/socket.io/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+    proxy_buffering off;
+}
 
-    # Socket.IO (Engine.IO) — WebSocket + long-polling
-    location /socket.io/ {
-        proxy_pass http://codenames_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
-    }
+location = {{APP_BASE_PATH}}/health {
+    proxy_pass http://codenames_backend/api/health;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+}
 
-    # Optional direct health (proxied) if someone hits /health without /api
-    location = /health {
-        proxy_pass http://codenames_backend/api/health;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-    }
+# SPA static files + client-side routes (/codenames/room/ABC → index.html)
+location {{APP_BASE_PATH}}/ {
+    alias {{FRONTEND_DIST_PATH}}/;
+    try_files $uri $uri/ @{{APP_NAME}}_spa;
+}
+
+location @{{APP_NAME}}_spa {
+    rewrite ^ {{APP_BASE_PATH}}/index.html last;
+}
+
+location = {{APP_BASE_PATH}}/index.html {
+    alias {{FRONTEND_DIST_PATH}}/index.html;
+}

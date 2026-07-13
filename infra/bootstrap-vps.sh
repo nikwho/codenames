@@ -13,18 +13,24 @@ APP_NAME="${APP_NAME:-codenames}"
 APP_USER="${APP_USER:-deploy}"
 APP_DIR="${APP_DIR:-/var/www/${APP_NAME}}"
 DOMAIN="${DOMAIN:-example.com}"
+APP_BASE_PATH="${APP_BASE_PATH:-/codenames}"
 ACME_WEBROOT="${ACME_WEBROOT:-/var/www/acme}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 APP_PORT="${APP_PORT:-3001}"
+
+# Normalize: leading slash, no trailing slash
+if [[ "${APP_BASE_PATH}" != "/" ]]; then
+  APP_BASE_PATH="/${APP_BASE_PATH#/}"
+  APP_BASE_PATH="${APP_BASE_PATH%/}"
+fi
 
 # Vite frontend build directory relative to a release root
 FRONTEND_DIST_REL="${FRONTEND_DIST_REL:-client/dist}"
 FRONTEND_DIST_PATH="${APP_DIR}/current/${FRONTEND_DIST_REL}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SETUP_NGINX_SCRIPT="${SCRIPT_DIR}/setup-nginx.sh"
 RENDER_SCRIPT="${SCRIPT_DIR}/render-nginx.sh"
-NGINX_SITE="/etc/nginx/sites-available/${APP_NAME}"
-NGINX_ENABLED="/etc/nginx/sites-enabled/${APP_NAME}"
 
 is_ip_address() {
   local host="$1"
@@ -42,6 +48,7 @@ echo "    APP_NAME=${APP_NAME}"
 echo "    APP_USER=${APP_USER}"
 echo "    APP_DIR=${APP_DIR}"
 echo "    DOMAIN=${DOMAIN}"
+echo "    APP_BASE_PATH=${APP_BASE_PATH}"
 echo "    NODE_MAJOR=${NODE_MAJOR}"
 echo "    APP_PORT=${APP_PORT}"
 echo "    FRONTEND_DIST_PATH=${FRONTEND_DIST_PATH}"
@@ -69,8 +76,8 @@ case "${VERSION_ID:-}" in
     ;;
 esac
 
-if [[ ! -f "${RENDER_SCRIPT}" ]]; then
-  echo "ERROR: render script missing: ${RENDER_SCRIPT}" >&2
+if [[ ! -f "${SETUP_NGINX_SCRIPT}" || ! -f "${RENDER_SCRIPT}" ]]; then
+  echo "ERROR: nginx scripts missing under ${SCRIPT_DIR}" >&2
   exit 1
 fi
 
@@ -160,6 +167,7 @@ for tpl in nginx.conf.template nginx.ssl.conf.template nginx.app.conf.template; 
   install -m 644 "${SCRIPT_DIR}/${tpl}" "${APP_DIR}/${tpl}"
 done
 install -m 755 "${SCRIPT_DIR}/render-nginx.sh" "${APP_DIR}/render-nginx.sh"
+install -m 755 "${SCRIPT_DIR}/setup-nginx.sh" "${APP_DIR}/setup-nginx.sh"
 install -m 755 "${SCRIPT_DIR}/setup-https-ip.sh" "${APP_DIR}/setup-https-ip.sh"
 
 echo "==> Setting ownership on ${APP_DIR}"
@@ -184,26 +192,16 @@ ufw status
 echo "==> Enabling fail2ban"
 systemctl enable --now fail2ban
 
-echo "==> Generating nginx site from template"
-export APP_NAME APP_DIR DOMAIN APP_PORT ACME_WEBROOT FRONTEND_DIST_PATH SSL_MODE=http
-bash "${RENDER_SCRIPT}"
-
-if [[ -L /etc/nginx/sites-enabled/default ]] || [[ -f /etc/nginx/sites-enabled/default ]]; then
-  echo "==> Removing nginx default site"
-  rm -f /etc/nginx/sites-enabled/default
-fi
-
-ln -sfn "${NGINX_SITE}" "${NGINX_ENABLED}"
-
-echo "==> Testing and reloading nginx"
-nginx -t
-systemctl enable nginx
-systemctl reload nginx
+echo "==> Generating nginx site from template (app at ${APP_BASE_PATH})"
+export APP_NAME APP_DIR DOMAIN APP_PORT APP_BASE_PATH ACME_WEBROOT FRONTEND_DIST_PATH
+DOMAIN="${DOMAIN}" APP_BASE_PATH="${APP_BASE_PATH}" MODE=site SSL_MODE=http \
+  bash "${SETUP_NGINX_SCRIPT}"
 
 echo
 echo "==> Bootstrap complete"
 echo "Next steps:"
 echo "  1) Edit env:   sudo nano ${APP_DIR}/shared/.env"
+echo "                 CLIENT_ORIGIN=${PUBLIC_SCHEME}://${DOMAIN}  (origin only, no ${APP_BASE_PATH})"
 echo "  2) SSH key:    set up deploy key for user ${APP_USER} (see infra/README.md)"
 echo "  3) Deploy:     su - ${APP_USER} -c 'REPO=git@github.com:USER/REPO.git BRANCH=main bash ${APP_DIR}/deploy.sh'"
 if [[ "${USE_IP_HTTPS}" -eq 1 ]]; then
@@ -211,7 +209,9 @@ if [[ "${USE_IP_HTTPS}" -eq 1 ]]; then
   echo "               (after first deploy; needs Certbot >= 5.4 — see infra/README.md)"
 else
   echo "  4) HTTPS:      sudo certbot --nginx -d ${DOMAIN}   (after DNS points here)"
+  echo "     Or refresh nginx: DOMAIN=${DOMAIN} bash ${APP_DIR}/setup-nginx.sh"
 fi
 echo
+echo "App URL: ${PUBLIC_SCHEME}://${DOMAIN}${APP_BASE_PATH}/"
 echo "Note: until the first successful deploy, ${FRONTEND_DIST_PATH} will not exist yet;"
 echo "nginx may 404 static files until current/ is created."

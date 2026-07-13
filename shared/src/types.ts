@@ -10,6 +10,31 @@ export type RoomStatus =
   | "guessing_phase"
   | "paused"
   | "game_over";
+/** Cumulative Russian word difficulty: easy ⊂ standard ⊂ advanced. */
+export type WordDifficulty = "easy" | "standard" | "advanced";
+export type WordTheme = "military" | "politics" | "religion" | "soviet" | "nationalities";
+
+export const WORD_THEMES: readonly WordTheme[] = [
+  "military",
+  "politics",
+  "religion",
+  "soviet",
+  "nationalities"
+] as const;
+
+export const WORD_THEME_LABELS: Record<WordTheme, string> = {
+  military: "Военная тема",
+  politics: "Политика",
+  religion: "Религия",
+  soviet: "СССР",
+  nationalities: "Национальности"
+};
+
+export const WORD_DIFFICULTY_LABELS: Record<WordDifficulty, string> = {
+  easy: "Лёгкий",
+  standard: "Обычный",
+  advanced: "Сложный"
+};
 
 export interface Card {
   id: string;
@@ -60,6 +85,11 @@ export interface Settings {
   startingTeam: "random" | Team;
   teamNames: TeamNames;
   wordPack: "ru";
+  wordDifficulty: WordDifficulty;
+  /** Optional adult lexicon on top of the difficulty pool. */
+  includeAdultWords: boolean;
+  /** Optional thematic packs mixed into the pool. */
+  wordThemes: WordTheme[];
   allowSpectators: boolean;
   enableSounds: boolean;
   showActionLog: boolean;
@@ -203,6 +233,9 @@ export const DEFAULT_SETTINGS: Settings = {
     blue: "Синие"
   },
   wordPack: "ru",
+  wordDifficulty: "standard",
+  includeAdultWords: false,
+  wordThemes: [],
   allowSpectators: true,
   enableSounds: true,
   showActionLog: true,

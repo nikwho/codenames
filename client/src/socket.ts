@@ -1,7 +1,8 @@
 import { io, type Socket } from "socket.io-client";
 import type { ClientToServerEvents, PlayerRole, ServerToClientEvents } from "@codenames/shared";
+import { socketIoPath } from "./basePath";
 
-function resolveApiUrl(): string {
+function resolveApiUrl(): string | undefined {
   if (import.meta.env.VITE_SERVER_URL) {
     return import.meta.env.VITE_SERVER_URL;
   }
@@ -9,20 +10,25 @@ function resolveApiUrl(): string {
     const port = import.meta.env.VITE_SERVER_PORT ?? "3001";
     return `http://${window.location.hostname}:${port}`;
   }
-  return "/";
+  // Production: same origin. Path must stay in `path` (not URL), or Socket.IO
+  // treats "/codenames/" as a namespace.
+  return undefined;
 }
 
-// Dev: same host as Vite (localhost or LAN IP). Prod: same origin via nginx.
 const API_URL = resolveApiUrl();
 const DEVICE_KEY = "codenames.deviceId";
 const NAME_KEY = "codenames.name";
 const ROLE_KEY = "codenames.role";
 
-export const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(API_URL, {
-  path: "/socket.io",
+const socketOptions = {
+  path: socketIoPath(),
   autoConnect: false,
   reconnection: true
-});
+} as const;
+
+export const socket: Socket<ServerToClientEvents, ClientToServerEvents> = API_URL
+  ? io(API_URL, socketOptions)
+  : io(socketOptions);
 
 function createDeviceId(): string {
   if (typeof crypto?.randomUUID === "function") {

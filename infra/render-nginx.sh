@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Render nginx site config from infra templates.
+# =============================================================================
+# render-nginx.sh — render nginx site + app snippet from infra templates.
 # Usage: SSL_MODE=http|https bash render-nginx.sh
+# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,10 +11,17 @@ APP_NAME="${APP_NAME:-codenames}"
 APP_DIR="${APP_DIR:-/var/www/${APP_NAME}}"
 DOMAIN="${DOMAIN:-example.com}"
 APP_PORT="${APP_PORT:-3001}"
+APP_BASE_PATH="${APP_BASE_PATH:-/codenames}"
 ACME_WEBROOT="${ACME_WEBROOT:-/var/www/acme}"
 FRONTEND_DIST_REL="${FRONTEND_DIST_REL:-client/dist}"
 FRONTEND_DIST_PATH="${APP_DIR}/current/${FRONTEND_DIST_REL}"
 SSL_MODE="${SSL_MODE:-http}"
+
+# Normalize: ensure leading slash, no trailing slash (except root "/")
+if [[ "${APP_BASE_PATH}" != "/" ]]; then
+  APP_BASE_PATH="/${APP_BASE_PATH#/}"
+  APP_BASE_PATH="${APP_BASE_PATH%/}"
+fi
 
 NGINX_APP_SNIPPET="/etc/nginx/snippets/${APP_NAME}-app.conf"
 NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/${APP_NAME}}"
@@ -35,6 +44,7 @@ render_template() {
     -e "s|{{FRONTEND_DIST_PATH}}|${FRONTEND_DIST_PATH}|g" \
     -e "s|{{ACME_WEBROOT}}|${ACME_WEBROOT}|g" \
     -e "s|{{APP_NAME}}|${APP_NAME}|g" \
+    -e "s|{{APP_BASE_PATH}}|${APP_BASE_PATH}|g" \
     -e "s|{{SSL_CERT_PATH}}|${SSL_CERT_PATH:-}|g" \
     -e "s|{{SSL_KEY_PATH}}|${SSL_KEY_PATH:-}|g" \
     "${template}"
@@ -59,8 +69,17 @@ case "${SSL_MODE}" in
     fi
     render_template "${HTTPS_TEMPLATE}" > "${TMP_CONF}"
     ;;
+  snippet)
+    # Only refresh the app locations snippet (for include into an existing server {}).
+    rm -f "${TMP_CONF}"
+    echo "Rendered snippet only: ${NGINX_APP_SNIPPET}"
+    echo "    APP_BASE_PATH=${APP_BASE_PATH}"
+    echo "Include in your server block:"
+    echo "    include ${NGINX_APP_SNIPPET};"
+    exit 0
+    ;;
   *)
-    echo "ERROR: SSL_MODE must be 'http' or 'https' (got '${SSL_MODE}')" >&2
+    echo "ERROR: SSL_MODE must be 'http', 'https', or 'snippet' (got '${SSL_MODE}')" >&2
     exit 1
     ;;
 esac
@@ -68,4 +87,5 @@ esac
 install -m 644 "${TMP_CONF}" "${NGINX_SITE}"
 rm -f "${TMP_CONF}"
 
-echo "Rendered ${NGINX_SITE} (SSL_MODE=${SSL_MODE})"
+echo "Rendered ${NGINX_SITE} (SSL_MODE=${SSL_MODE}, APP_BASE_PATH=${APP_BASE_PATH})"
+echo "Rendered ${NGINX_APP_SNIPPET}"
