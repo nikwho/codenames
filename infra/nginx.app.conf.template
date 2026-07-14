@@ -2,6 +2,7 @@
 # Placeholders: {{APP_BASE_PATH}} {{APP_PORT}} {{FRONTEND_DIST_PATH}} {{APP_NAME}}
 #
 # Backend keeps /api and /socket.io at the Node process; nginx strips the prefix.
+# Requires $codenames_connection_upgrade from the site template map.
 
 # /codenames → /codenames/
 location = {{APP_BASE_PATH}} {
@@ -24,7 +25,7 @@ location {{APP_BASE_PATH}}/socket.io/ {
     proxy_pass http://codenames_backend/socket.io/;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
+    proxy_set_header Connection $codenames_connection_upgrade;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

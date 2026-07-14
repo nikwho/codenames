@@ -91,7 +91,24 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (allowedOrigins.includes(origin)) {
     return true;
   }
+  // Allow http↔https for the same host listed in CLIENT_ORIGIN
+  // (common when certbot is not ready yet, but .env already has https://).
+  try {
+    const requestHost = new URL(origin).hostname;
+    for (const allowed of allowedOrigins) {
+      try {
+        if (new URL(allowed).hostname === requestHost) {
+          return true;
+        }
+      } catch {
+        // ignore malformed CLIENT_ORIGIN entries
+      }
+    }
+  } catch {
+    return false;
+  }
   if (process.env.NODE_ENV === "production") {
+    console.warn(`CORS blocked origin: ${origin} (allowed: ${allowedOrigins.join(", ") || "<empty>"})`);
     return false;
   }
   try {

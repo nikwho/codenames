@@ -1,6 +1,11 @@
 # Placeholders replaced by render-nginx.sh (SSL_MODE=https):
 #   {{DOMAIN}} {{APP_NAME}} {{APP_BASE_PATH}} {{ACME_WEBROOT}} {{SSL_CERT_PATH}} {{SSL_KEY_PATH}} {{APP_PORT}}
 
+map $http_upgrade $codenames_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 upstream codenames_backend {
     server 127.0.0.1:{{APP_PORT}};
     keepalive 32;

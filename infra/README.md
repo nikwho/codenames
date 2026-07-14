@@ -93,6 +93,12 @@ CLIENT_ORIGIN=https://partyprotocol.ru
 
 `CLIENT_ORIGIN` must match the public site **origin** (scheme + host, **no** `/codenames` path). Used for Express CORS and Socket.IO CORS.
 
+If the browser hits the site over **http** while `.env` has `https://…` (or the reverse), Socket.IO returns **400 Bad request**. Prefer HTTPS; until then set the scheme you actually use, or both:
+
+```bash
+CLIENT_ORIGIN=https://partyprotocol.ru,http://partyprotocol.ru
+```
+
 The deploy script symlinks this file to `$RELEASE/server/.env`. Real secrets must never be committed to git (`.env` is already gitignored).
 
 ## 3. SSH deploy key for Git

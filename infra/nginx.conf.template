@@ -1,6 +1,12 @@
 # Placeholders replaced by render-nginx.sh (SSL_MODE=http):
 #   {{DOMAIN}} {{APP_DIR}} {{APP_PORT}} {{FRONTEND_DIST_PATH}} {{ACME_WEBROOT}} {{APP_NAME}} {{APP_BASE_PATH}}
 
+# Needed for Socket.IO: only send "upgrade" when the client asks for WebSocket.
+map $http_upgrade $codenames_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 upstream codenames_backend {
     server 127.0.0.1:{{APP_PORT}};
     keepalive 32;
