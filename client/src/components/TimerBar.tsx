@@ -47,8 +47,8 @@ export function TimerBar({ state, remainingSeconds }: TimerBarProps) {
         {state.settings.teamNames[team]}
       </div>
 
-      <div
-        className={`order-last min-w-0 basis-full truncate rounded-xl px-2.5 py-1.5 text-sm font-black uppercase sm:order-none sm:basis-auto sm:flex-1 sm:px-3 sm:text-base ${
+      <details
+        className={`relative order-last min-w-0 basis-full rounded-xl px-2.5 py-1.5 text-sm font-black uppercase sm:order-none sm:basis-auto sm:flex-1 sm:px-3 sm:text-base ${
           clueTeam === "red"
             ? state.currentClue
               ? "bg-rose-500/20 text-rose-100"
@@ -59,8 +59,15 @@ export function TimerBar({ state, remainingSeconds }: TimerBarProps) {
         }`}
         title={clueText}
       >
-        {clueText}
-      </div>
+        <summary className="cursor-pointer break-words" aria-label="Текущая подсказка и история">{clueText} <span className="text-xs normal-case opacity-70">· История ({state.clueHistory.length})</span></summary>
+        <div className="absolute left-0 right-0 top-full z-30 mt-2 max-h-64 space-y-2 overflow-y-auto rounded-xl border border-white/15 bg-slate-950 p-3 shadow-xl">
+          {!state.clueHistory.length && <p className="text-xs font-normal normal-case text-slate-400">Подсказок пока нет</p>}
+          {state.clueHistory.map((clue) => <div key={clue.id} className={`rounded-lg p-2 ${clue.team === "red" ? "bg-red-500/15 text-red-200" : "bg-blue-500/15 text-blue-200"}`}>
+            <p className="break-words">{clue.text}</p>
+            <p className="mt-1 text-xs font-normal normal-case">{state.settings.teamNames[clue.team]} · {state.players.find((player) => player.deviceId === clue.givenByDeviceId)?.name ?? "Загадывающий"}</p>
+          </div>)}
+        </div>
+      </details>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:ml-0">
         <div ref={scoreRef} className="relative flex items-center gap-1.5">

@@ -24,6 +24,7 @@ export function useGameSocket(roomId: string) {
   const [error, setError] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [nextRoomId, setNextRoomId] = useState<string | null>(null);
+  const [kicked, setKicked] = useState(false);
 
   const deviceId = useMemo(() => getDeviceId(), []);
 
@@ -38,16 +39,23 @@ export function useGameSocket(roomId: string) {
         roomId,
         deviceId,
         name,
-        role
+        role,
+        updateProfile: true
       });
     },
     [deviceId, roomId]
   );
 
   useEffect(() => {
+    setState(null);
+    setKicked(false);
+    let removed = false;
+    let heartbeatPending = false;
+    let disposed = false;
     const onConnect = () => {
+      if (removed) return;
       setConnectionStatus("connected");
-      joinAs(getStoredName(), getStoredRole());
+      socket.emit("joinRoom", { roomId, deviceId, name: getStoredName(), role: getStoredRole() });
     };
     const onDisconnect = () => setConnectionStatus("disconnected");
     const onReconnectAttempt = () => setConnectionStatus("reconnecting");
@@ -58,7 +66,7 @@ export function useGameSocket(roomId: string) {
     socket.on("gameState", ({ stateForCurrentPlayer }) => {
       setState(stateForCurrentPlayer);
       setRemainingSeconds(stateForCurrentPlayer.remainingSeconds);
-      setError(null);
+      if (stateForCurrentPlayer.currentPlayer) setStoredRole(stateForCurrentPlayer.currentPlayer.role);
     });
     socket.on("timerTick", ({ remainingSeconds: nextRemaining }) => {
       setRemainingSeconds(nextRemaining);
@@ -69,6 +77,26 @@ export function useGameSocket(roomId: string) {
     socket.on("newGameCreated", ({ roomId: createdRoomId }) => {
       setNextRoomId(createdRoomId);
     });
+    socket.on("kicked", () => {
+      removed = true;
+      setKicked(true);
+      setState(null);
+      setError("Администратор удалил вас из комнаты");
+    });
+    const onConnectError = () => setConnectionStatus("disconnected");
+    socket.on("connect_error", onConnectError);
+    const heartbeat = window.setInterval(() => {
+      if (!socket.connected || heartbeatPending || removed) return;
+      heartbeatPending = true;
+      socket.timeout(7000).emit("heartbeat", (error: Error | null) => {
+        heartbeatPending = false;
+        if (disposed || removed) return;
+        if (error) {
+          setConnectionStatus("reconnecting");
+          socket.disconnect().connect();
+        }
+      });
+    }, 5000);
 
     if (socket.connected) {
       onConnect();
@@ -77,6 +105,8 @@ export function useGameSocket(roomId: string) {
     }
 
     return () => {
+      disposed = true;
+      window.clearInterval(heartbeat);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.io.off("reconnect_attempt", onReconnectAttempt);
@@ -84,6 +114,9 @@ export function useGameSocket(roomId: string) {
       socket.off("timerTick");
       socket.off("errorMessage");
       socket.off("newGameCreated");
+      socket.off("kicked");
+      socket.off("connect_error", onConnectError);
+      socket.disconnect();
     };
   }, [joinAs]);
 
@@ -93,12 +126,19 @@ export function useGameSocket(roomId: string) {
     error,
     remainingSeconds,
     nextRoomId,
+    kicked,
     deviceId,
     joinAs,
     chooseTeam: (team: Team) => socket.emit("chooseTeam", { team }),
     chooseSpymasterTeam: (team: Team) => socket.emit("chooseSpymasterTeam", { team }),
     startGame: () => socket.emit("startGame"),
-    submitClue: (payload: SubmitCluePayload) => socket.emit("submitClue", payload),
+    submitClue: (payload: SubmitCluePayload): Promise<{ ok: boolean; message?: string }> => {
+      if (!socket.connected) return Promise.resolve({ ok: false, message: "Нет связи с сервером. Дождитесь подключения" });
+      setError(null);
+      return new Promise((resolve) => socket.timeout(7000).emit("submitClue", payload, (error: Error | null, result: { ok: boolean; message?: string }) => {
+        resolve(error ? { ok: false, message: "Сервер не подтвердил подсказку. Проверьте текущий ход перед повтором" } : result);
+      }));
+    },
     revealCard: (cardId: string) => socket.emit("revealCard", { cardId }),
     endGuessing: () => socket.emit("endGuessing"),
     pauseGame: () => socket.emit("pauseGame"),

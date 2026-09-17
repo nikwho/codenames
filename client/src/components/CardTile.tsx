@@ -1,66 +1,40 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { SanitizedCard } from "@codenames/shared";
 
 interface CardTileProps {
   card: SanitizedCard;
   disabled: boolean;
   mode: "guesser" | "spymaster";
-  holdToConfirmMs: number;
+  votes: string[];
+  ownVote: boolean;
+  endsAt: number | null;
+  pulse: number;
+  onTap: () => void;
   onReveal: () => void;
 }
 
-export function CardTile({ card, disabled, mode, holdToConfirmMs, onReveal }: CardTileProps) {
-  const [progress, setProgress] = useState(0);
-  const [isHolding, setIsHolding] = useState(false);
+export function CardTile({ card, disabled, mode, votes, ownVote, endsAt, pulse, onTap, onReveal }: CardTileProps) {
+  const [now, setNow] = useState(Date.now());
   const [fontSize, setFontSize] = useState(18);
-  const frameRef = useRef<number | null>(null);
   const tileRef = useRef<HTMLButtonElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
-  const startedAtRef = useRef(0);
-  const sentRef = useRef(false);
-
-  const cancel = () => {
-    if (frameRef.current) {
-      cancelAnimationFrame(frameRef.current);
-    }
-    frameRef.current = null;
-    startedAtRef.current = 0;
-    sentRef.current = false;
-    setIsHolding(false);
-    setProgress(0);
-  };
-
-  const tick = () => {
-    const elapsed = performance.now() - startedAtRef.current;
-    const nextProgress = Math.min(1, elapsed / holdToConfirmMs);
-    setProgress(nextProgress);
-
-    if (nextProgress >= 1) {
-      if (!sentRef.current) {
-        sentRef.current = true;
-        onReveal();
-      }
-      cancel();
-      return;
-    }
-
-    frameRef.current = requestAnimationFrame(tick);
-  };
-
-  const begin = (event: PointerEvent<HTMLButtonElement>) => {
-    if (disabled || card.revealed || isHolding) {
-      return;
-    }
-    event.currentTarget.setPointerCapture(event.pointerId);
-    startedAtRef.current = performance.now();
-    sentRef.current = false;
-    setIsHolding(true);
-    frameRef.current = requestAnimationFrame(tick);
-  };
+  const gesture = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  useEffect(() => {
+    if (!endsAt) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, [endsAt]);
+  useEffect(() => {
+    if (!pulse || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const animation = tileRef.current?.animate([
+      { transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }
+    ], { duration: 240 });
+    return () => animation?.cancel();
+  }, [pulse]);
 
   const showKey = mode === "spymaster";
   const visibleType = card.revealed || showKey ? card.type : undefined;
-  const nativeDisabled = mode !== "spymaster" && disabled;
 
   useLayoutEffect(() => {
     const tile = tileRef.current;
@@ -91,17 +65,22 @@ export function CardTile({ card, disabled, mode, holdToConfirmMs, onReveal }: Ca
     <button
       ref={tileRef}
       type="button"
-      className={`relative flex aspect-[5/3] items-center justify-center overflow-hidden rounded-xl border-2 px-0.5 text-center font-black uppercase tracking-wide shadow-lg transition select-none touch-none sm:rounded-2xl sm:px-2 ${tileClass(visibleType, card.revealed, mode)} ${
+      className={`relative flex aspect-[5/3] items-center justify-center overflow-hidden rounded-xl border-2 px-0.5 text-center font-black uppercase tracking-wide shadow-lg transition select-none touch-manipulation sm:rounded-2xl sm:px-2 ${tileClass(visibleType, card.revealed, mode)} ${ownVote ? "ring-2 ring-amber-400" : ""} ${
         disabled ? (mode === "spymaster" ? "cursor-default" : "cursor-not-allowed opacity-80") : "hover:-translate-y-0.5"
       }`}
       style={tileStyle(visibleType, mode)}
-      onPointerDown={begin}
-      onPointerUp={cancel}
-      onPointerLeave={cancel}
-      onPointerCancel={cancel}
-      onContextMenu={(event) => event.preventDefault()}
-      disabled={nativeDisabled}
-      aria-disabled={disabled}
+      onPointerDown={(event) => { gesture.current = { x: event.clientX, y: event.clientY, moved: false }; }}
+      onPointerMove={(event) => {
+        if (gesture.current && Math.hypot(event.clientX - gesture.current.x, event.clientY - gesture.current.y) > 8) gesture.current.moved = true;
+      }}
+      onPointerCancel={() => { if (gesture.current) gesture.current.moved = true; }}
+      onClick={(event) => {
+        if (event.detail !== 0 && gesture.current?.moved) return;
+        onTap();
+        if (!disabled && !card.revealed) onReveal();
+      }}
+      aria-pressed={ownVote}
+      aria-label={`${card.word}${votes.length ? `, голосов: ${votes.length}` : ""}${ownVote ? ", ваш голос, нажмите для отмены" : ""}`}
     >
       <span
         aria-hidden
@@ -126,14 +105,10 @@ export function CardTile({ card, disabled, mode, holdToConfirmMs, onReveal }: Ca
           <span className="absolute left-1/2 top-1/2 h-[145%] w-0.5 -translate-x-1/2 -translate-y-1/2 rotate-[58deg] rounded-full bg-white/45" />
         </span>
       )}
-      {isHolding && (
-        <>
-          <span className="absolute inset-0 origin-bottom bg-amber-400/25" style={{ transform: `scaleY(${progress})` }} />
-          <span className="absolute inset-x-1.5 bottom-1 h-1 overflow-hidden rounded-full bg-black/25 sm:inset-x-3 sm:bottom-2">
-            <span className="block h-full rounded-full bg-amber-300" style={{ width: `${progress * 100}%` }} />
-          </span>
-        </>
-      )}
+      <span className="absolute bottom-1 left-1 right-1 z-20 flex flex-wrap justify-center gap-1" aria-label={votes.join(", ")}>
+        {votes.map((name, index) => <span key={index} title={name} className="h-1.5 w-1.5 rounded-full bg-amber-500 ring-1 ring-black/40" />)}
+      </span>
+      {endsAt && <span className="absolute right-1 top-1 z-20 rounded bg-black/80 px-1 text-xs text-white">{Math.max(0, Math.ceil((endsAt - now) / 1000))}</span>}
     </button>
   );
 }

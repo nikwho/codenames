@@ -31,6 +31,7 @@ import {
   updateSettings,
   resetPlayers
 } from "./engine/game.js";
+import { voteCard, updatePlayer, kickPlayer } from "./engine/game.js";
 import { RoomStore } from "./rooms.js";
 
 type ServerSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -145,6 +146,8 @@ app.get("/api/health", health);
 
 const httpServer = createServer(app);
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
+  pingInterval: 5000,
+  pingTimeout: 10000,
   path: "/socket.io/",
   cors: corsOptions
 });
@@ -155,10 +158,16 @@ const roomStore = new RoomStore(
 );
 
 io.on("connection", (socket) => {
-  socket.on("createRoom", (_payload, ack) => {
+  socket.on("heartbeat", (ack) => {
+    if (typeof ack === "function") ack();
+  });
+  socket.on("createRoom", (payload, ack) => {
+    run(socket, () => {
     const room = roomStore.createRoom();
+    if (payload?.deviceId) addPlayer(room, { roomId: room.roomId, deviceId: payload.deviceId, name: payload.name ?? "Игрок", role: "guesser" });
     socket.emit("roomCreated", { roomId: room.roomId });
     ack?.({ roomId: room.roomId });
+    });
   });
 
   socket.on("joinRoom", (payload) => {
@@ -168,6 +177,7 @@ io.on("connection", (socket) => {
         ...payload,
         roomId: payload.roomId.toUpperCase()
       };
+      const player = addPlayer(room, normalizedPayload);
       for (const joinedRoom of socket.rooms) {
         if (joinedRoom !== socket.id) {
           socket.leave(joinedRoom);
@@ -177,7 +187,6 @@ io.on("connection", (socket) => {
       socket.data.roomId = room.roomId;
       socket.data.deviceId = payload.deviceId;
       socket.data.displayView ??= defaultDisplayView(payload.role);
-      const player = addPlayer(room, normalizedPayload);
       io.to(room.roomId).emit("playerJoined", { player });
       broadcastGameState(room);
     });
@@ -214,20 +223,61 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("submitClue", (payload) => {
-    withCurrentRoom(socket, (room, deviceId) => {
+  socket.on("submitClue", (payload, ack) => {
+    try {
+      const room = getRequiredRoom(socket.data.roomId);
+      const deviceId = socket.data.deviceId;
       submitClue(room, deviceId, payload);
       broadcastGameState(room);
-    });
+      ack?.({ ok: true });
+    } catch (error) {
+      const message = error instanceof GameError ? error.message : "Не удалось отправить подсказку";
+      if (!(error instanceof GameError)) console.error(error);
+      ack?.({ ok: false, message });
+      socket.emit("errorMessage", { message });
+    }
   });
 
   socket.on("revealCard", ({ cardId }) => {
     withCurrentRoom(socket, (room, deviceId) => {
-      revealCard(room, deviceId, cardId);
+      voteCard(room, deviceId, cardId);
       broadcastGameState(room);
       if (room.winner) {
         io.to(room.roomId).emit("gameOver", { winner: room.winner });
       }
+    });
+  });
+
+  socket.on("tapCard", ({ cardId }) => {
+    withCurrentRoom(socket, (room) => {
+      if (!room.cards.some((card) => card.id === cardId)) return;
+      const now = Date.now();
+      if (now - (socket.data.lastTapAt ?? 0) < 150) return;
+      socket.data.lastTapAt = now;
+      io.to(room.roomId).emit("cardTapped", { cardId });
+    });
+  });
+
+  socket.on("updatePlayer", ({ deviceId, role, team }) => {
+    withAdminRoom(socket, (room, adminId) => {
+      updatePlayer(room, adminId, deviceId, role, team);
+      broadcastGameState(room);
+    });
+  });
+
+  socket.on("kickPlayer", ({ deviceId }) => {
+    withAdminRoom(socket, (room, adminId) => {
+      kickPlayer(room, adminId, deviceId);
+      for (const id of [...(io.sockets.adapter.rooms.get(room.roomId) ?? [])]) {
+        const target = io.sockets.sockets.get(id);
+        if (target?.data.deviceId === deviceId) {
+          target.emit("kicked");
+          target.leave(room.roomId);
+          delete target.data.roomId;
+          delete target.data.deviceId;
+        }
+      }
+      broadcastGameState(room);
     });
   });
 
@@ -237,7 +287,7 @@ io.on("connection", (socket) => {
       if (!player || player.role !== "guesser") {
         throw new GameError("Завершить отгадывание может только отгадывающий");
       }
-      if (!player.isBaseGuesser && player.team !== room.currentTeam) {
+      if (!player.connected || (player.team !== "both" && player.team !== room.currentTeam)) {
         throw new GameError("Завершить ход может только активная команда");
       }
       if (room.status !== "guessing_phase") {
@@ -310,6 +360,8 @@ io.on("connection", (socket) => {
     if (!room) {
       return;
     }
+    const stillConnected = [...(io.sockets.adapter.rooms.get(roomId) ?? [])].some((id) => io.sockets.sockets.get(id)?.data.deviceId === deviceId);
+    if (stillConnected) return;
     const player = markDisconnected(room, deviceId);
     if (player) {
       io.to(room.roomId).emit("playerUpdated", { player });
@@ -341,7 +393,9 @@ function withCurrentRoom(socket: ServerSocket, callback: (room: GameRoom, device
     if (!roomId || !deviceId) {
       throw new GameError("Сначала подключитесь к комнате");
     }
-    callback(getRequiredRoom(roomId), deviceId);
+    const room = getRequiredRoom(roomId);
+    if (!room.players.some((player) => player.deviceId === deviceId && player.connected)) throw new GameError("Игрок не подключён к комнате");
+    callback(room, deviceId);
   });
 }
 
@@ -390,14 +444,11 @@ function moveSocketsToRoom(previousRoomId: string, nextRoom: GameRoom): void {
 
 function emitGameState(socket: ServerSocket, room: GameRoom): void {
   const deviceId = socket.data.deviceId as string | undefined;
-  const displayView = socket.data.displayView as DisplayView | undefined;
   if (!deviceId) {
     return;
   }
   socket.emit("gameState", {
-    stateForCurrentPlayer: sanitizeStateForPlayer(room, deviceId, {
-      revealKeyForDebugView: displayView === "spymaster" || displayView === "table"
-    })
+    stateForCurrentPlayer: sanitizeStateForPlayer(room, deviceId)
   });
 }
 

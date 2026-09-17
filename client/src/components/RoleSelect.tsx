@@ -23,6 +23,8 @@ export function RoleSelect({ currentPlayer, onJoin }: RoleSelectProps) {
   const [role, setRole] = useState<PlayerRole>(initialRole);
   const nameFocusedRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
+  const roleRef = useRef(role);
+  roleRef.current = role;
 
   useEffect(() => {
     if (!currentPlayer?.name || nameFocusedRef.current) {
@@ -60,7 +62,7 @@ export function RoleSelect({ currentPlayer, onJoin }: RoleSelectProps) {
       window.clearTimeout(debounceRef.current);
     }
     debounceRef.current = window.setTimeout(() => {
-      commit(nextName, role);
+      commit(nextName, roleRef.current);
     }, 350);
   };
 
@@ -98,6 +100,8 @@ export function RoleSelect({ currentPlayer, onJoin }: RoleSelectProps) {
             key={item.value}
             type="button"
             onClick={() => {
+              if (debounceRef.current) window.clearTimeout(debounceRef.current);
+              roleRef.current = item.value;
               setRole(item.value);
               commit(name, item.value);
             }}

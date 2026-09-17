@@ -38,8 +38,9 @@ export function PlayerList({ players }: PlayerListProps) {
 }
 
 function roleLabel(role: PlayerDevice["role"]): string {
-  if (role === "spymaster") return "загад.";
-  return "отгад.";
+  if (role === "spymaster") return "загадывает";
+  if (role === "spectator") return "наблюдает";
+  return "отгадывает";
 }
 
 function teamLabel(team: PlayerDevice["team"]): string {

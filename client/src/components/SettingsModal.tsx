@@ -47,14 +47,17 @@ export function SettingsModal({ settings, onClose, onSave }: SettingsModalProps)
           <NumberField label="Бонус к первой подсказке, сек" value={draft.familiarizationSeconds} onChange={(value) => setNumber("familiarizationSeconds", value)} />
           <NumberField label="Подсказка, сек" value={draft.clueSeconds} onChange={(value) => setNumber("clueSeconds", value)} />
           <NumberField label="Отгадывание, сек" value={draft.guessingSeconds} onChange={(value) => setNumber("guessingSeconds", value)} />
-          <NumberField label="Hold-to-confirm, мс" value={draft.holdToConfirmMs} onChange={(value) => setNumber("holdToConfirmMs", value)} />
+          <p className="text-sm text-slate-400">Единогласный выбор открывается через 3 секунды. Размер, состав поля и набор слов применяются со следующего раунда.</p>
           <NumberField label="Красные" value={draft.redCards} onChange={(value) => setNumber("redCards", value)} />
           <NumberField label="Синие" value={draft.blueCards} onChange={(value) => setNumber("blueCards", value)} />
           <NumberField label="Нейтральные" value={draft.neutralCards} onChange={(value) => setNumber("neutralCards", value)} />
           <NumberField label="Убийцы" value={draft.assassinCards} onChange={(value) => setNumber("assassinCards", value)} />
+          <NumberField label="Максимум загадывающих" value={draft.maxSpymasters} onChange={(value) => setNumber("maxSpymasters", value)} />
+          {(["red", "blue"] as const).map((team) => <label key={team}><span className="text-sm text-slate-400">Название {team === "red" ? "красной" : "синей"} команды</span><input className="field mt-1 w-full" value={draft.teamNames[team]} onChange={(event) => setDraft((current) => ({ ...current, teamNames: { ...current.teamNames, [team]: event.target.value } }))} /></label>)}
         </div>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {([ ["autoEndTurnOnNeutral", "Нейтральная карточка завершает ход"], ["endGameOnAssassin", "Убийца завершает игру"], ["allowSpectators", "Разрешить наблюдателей"] ] as const).map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-2xl bg-slate-900 p-4"><input type="checkbox" checked={draft[key]} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>)}
           <label>
             <span className="text-sm text-slate-400">Начинает</span>
             <select
@@ -127,7 +130,7 @@ export function SettingsModal({ settings, onClose, onSave }: SettingsModalProps)
         <button
           className="btn-primary mt-6 w-full"
           onClick={() => {
-            onSave(draft);
+            onSave({ ...draft, boardSize: draft.redCards + draft.blueCards + draft.neutralCards + draft.assassinCards });
             onClose();
           }}
         >

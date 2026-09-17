@@ -11,6 +11,7 @@ import {
   startGuessingWithoutClue,
   submitClue
 } from "../src/engine/game.js";
+import { updatePlayer } from "../src/engine/game.js";
 
 describe("game engine", () => {
   it("generates 25 cards", () => {
@@ -83,7 +84,7 @@ describe("game engine", () => {
     const room = guessingRoom("blue");
     add(room, "base", "guesser");
     add(room, "red-guess", "guesser");
-    chooseTeam(room, "red-guess", "red");
+    updatePlayer(room, "table", "red-guess", "guesser", "red");
 
     expect(() => revealCard(room, "red-guess", room.cards[0].id)).toThrow(/чужую команду/);
   });
@@ -133,9 +134,10 @@ describe("game engine", () => {
     const room = startedRoom();
     room.currentTeam = "blue";
     add(room, "device", "guesser");
-    chooseTeam(room, "device", "red");
+    updatePlayer(room, "table", "device", "guesser", "red");
 
-    const spymaster = add(room, "device", "spymaster");
+    updatePlayer(room, "table", "device", "spymaster", null);
+    const spymaster = room.players.find((player) => player.deviceId === "device")!;
 
     expect(spymaster.team).toBe("both");
     expect(() => submitClue(room, "device", { text: "река 2" })).not.toThrow();
@@ -201,7 +203,7 @@ describe("game engine", () => {
     const room = startedRoom("red");
     add(room, "red-spy", "spymaster");
     add(room, "blue-spy", "spymaster");
-    chooseSpymasterTeam(room, "blue-spy", "blue");
+    updatePlayer(room, "table", "blue-spy", "spymaster", "blue");
     startGuessingWithoutClue(room);
 
     expect(() => submitClue(room, "blue-spy", { text: "мост 1" })).toThrow(/активную команду/);

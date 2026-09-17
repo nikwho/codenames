@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { PlayerRole } from "@codenames/shared";
-import { getStoredName, getStoredRole, setStoredName, setStoredRole, socket } from "../socket";
+import { getDeviceId, getStoredName, getStoredRole, setStoredName, setStoredRole, socket } from "../socket";
 
 interface HomePageProps {
   navigate: (path: string) => void;
@@ -26,7 +26,7 @@ export function HomePage({ navigate }: HomePageProps) {
     if (!socket.connected) {
       socket.connect();
     }
-    socket.emit("createRoom", undefined, ({ roomId }) => {
+    socket.emit("createRoom", { deviceId: getDeviceId(), name, role: "guesser" }, ({ roomId }) => {
       setIsCreating(false);
       navigate(`/room/${roomId}`);
     });

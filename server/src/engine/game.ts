@@ -12,6 +12,8 @@ import {
   type Settings,
   type SubmitCluePayload,
   type Team,
+  type PlayerRole,
+  type TeamSelection,
   type WordDifficulty,
   type WordTheme
 } from "@codenames/shared";
@@ -35,6 +37,9 @@ export function createGame(settingsPatch: Partial<Settings> = {}, roomId = gener
   const currentTeam = settings.startingTeam === "random" ? randomTeam() : settings.startingTeam;
 
   return {
+    votes: {},
+    pendingReveal: null,
+    kickedDeviceIds: [],
     roomId,
     status: "lobby",
     currentPhase: "lobby",
@@ -67,7 +72,7 @@ export function createContinuationGame(source: GameRoom, roomId = generateRoomId
   const now = Date.now();
   fresh.players = source.players.map((player) => ({
     ...player,
-    connected: true,
+    connected: player.connected,
     lastSeenAt: now
   }));
   addLog(fresh, "Создана новая игра с теми же игроками");
@@ -75,47 +80,27 @@ export function createContinuationGame(source: GameRoom, roomId = generateRoomId
 }
 
 export function addPlayer(room: GameRoom, payload: JoinRoomPayload): PlayerDevice {
-  if (payload.role === "spectator") {
-    throw new GameError("Роль наблюдателя отключена");
-  }
-
+  if (room.kickedDeviceIds.includes(payload.deviceId)) throw new GameError("Вы удалены из этой комнаты");
+  if (!["guesser", "spymaster", "spectator"].includes(payload.role)) throw new GameError("Неизвестная роль");
   const now = Date.now();
   const existing = findPlayer(room, payload.deviceId);
   if (existing) {
-    const previousRole = existing.role;
-    const requestedRole = payload.role;
-    if (requestedRole === "spymaster" && previousRole !== "spymaster" && getSpymasters(room).length >= room.settings.maxSpymasters) {
-      throw new GameError(`Максимум загадывающих: ${room.settings.maxSpymasters}`);
+    if (payload.updateProfile) {
+      if (payload.role !== existing.role) {
+        if (room.status !== "lobby" && !existing.isBaseGuesser) throw new GameError("Во время игры роль меняет администратор");
+        assignPlayer(room, existing, payload.role, payload.role === "spymaster" ? null : existing.team);
+      }
+      existing.name = normalizeName(payload.name, existing.name);
     }
-    existing.name = normalizeName(payload.name, existing.name);
-    existing.role = requestedRole;
+    if (!existing.connected) clearVotes(room);
     existing.connected = true;
     existing.lastSeenAt = now;
-
-    if (requestedRole === "guesser") {
-      const hasOtherBase = room.players.some(
-        (player) => player.deviceId !== existing.deviceId && player.isBaseGuesser
-      );
-      if (!hasOtherBase) {
-        existing.isBaseGuesser = true;
-        existing.team = "both";
-      } else if (existing.isBaseGuesser) {
-        existing.team = "both";
-      } else if (existing.team === "both") {
-        existing.team = null;
-      }
-    } else {
-      existing.isBaseGuesser = false;
-    }
-
-    if (requestedRole === "spymaster" || previousRole === "spymaster") {
-      normalizeSpymasterAssignments(room);
-    }
     touch(room);
     addLog(room, `${existing.name} переподключился`);
     return existing;
   }
 
+  if (payload.role === "spectator" && !room.settings.allowSpectators) throw new GameError("Наблюдатели отключены");
   if (payload.role === "spymaster" && getSpymasters(room).length >= room.settings.maxSpymasters) {
     throw new GameError(`Максимум загадывающих: ${room.settings.maxSpymasters}`);
   }
@@ -139,6 +124,7 @@ export function addPlayer(room: GameRoom, payload: JoinRoomPayload): PlayerDevic
   };
 
   room.players.push(player);
+  clearVotes(room);
   normalizeSpymasterAssignments(room);
   addLog(room, `${player.name} вошел в комнату`);
   touch(room);
@@ -152,6 +138,11 @@ export function markDisconnected(room: GameRoom, deviceId: string): PlayerDevice
   }
 
   player.connected = false;
+  clearVotes(room);
+  if (player.role === "spymaster" && !["paused", "lobby", "game_over"].includes(room.status)) {
+    pauseGame(room);
+    addLog(room, `${player.name} офлайн. Игра приостановлена`);
+  }
   player.lastSeenAt = Date.now();
   touch(room);
   return player;
@@ -159,14 +150,13 @@ export function markDisconnected(room: GameRoom, deviceId: string): PlayerDevice
 
 export function chooseTeam(room: GameRoom, deviceId: string, team: Team): PlayerDevice {
   const player = requirePlayer(room, deviceId);
+  if (team !== "red" && team !== "blue") throw new GameError("Неизвестная команда");
+  if (room.status !== "lobby" && !player.isBaseGuesser) throw new GameError("Во время игры команду меняет администратор");
   if (player.role !== "guesser") {
     throw new GameError("Команду отгадывающих может выбрать только отгадывающий");
   }
-  if (player.isBaseGuesser) {
-    player.team = "both";
-  } else {
-    player.team = team;
-  }
+  player.team = team;
+  clearVotes(room);
   addLog(room, `${player.name} теперь за команду ${teamLabel(room, team)}`, deviceId);
   touch(room);
   return player;
@@ -174,6 +164,8 @@ export function chooseTeam(room: GameRoom, deviceId: string, team: Team): Player
 
 export function chooseSpymasterTeam(room: GameRoom, deviceId: string, team: Team): PlayerDevice {
   const player = requirePlayer(room, deviceId);
+  if (team !== "red" && team !== "blue") throw new GameError("Неизвестная команда");
+  if (room.status !== "lobby" && !player.isBaseGuesser) throw new GameError("Во время игры команду меняет администратор");
   if (player.role !== "spymaster") {
     throw new GameError("Команду загадывающих может выбрать только загадывающий");
   }
@@ -199,6 +191,7 @@ export function chooseSpymasterTeam(room: GameRoom, deviceId: string, team: Team
 
 export function startGame(room: GameRoom): GameRoom {
   requireStatus(room, ["lobby", "game_over"]);
+  if (room.players.some((player) => player.role === "spymaster" && !player.connected)) throw new GameError("Загадывающий офлайн");
   const currentTeam = resolveStartingTeam(room.settings);
   const cardCounts = resolveTeamCardCounts(room.settings, currentTeam);
   room.cards = generateCards(room.settings, cardCounts);
@@ -237,7 +230,7 @@ export function restartRound(room: GameRoom): GameRoom {
 export function submitClue(room: GameRoom, deviceId: string, payload: SubmitCluePayload): GameRoom {
   requireStatus(room, ["clue_phase", "guessing_phase"]);
   const player = requirePlayer(room, deviceId);
-  if (player.role !== "spymaster") {
+  if (!player.connected || player.role !== "spymaster") {
     throw new GameError("Подсказку может дать только загадывающий");
   }
   if (!canSpymasterAct(player, room.currentTeam)) {
@@ -300,6 +293,7 @@ export function revealCard(room: GameRoom, deviceId: string, cardId: string): Ga
   }
 
   card.revealed = true;
+  clearVotes(room);
   card.revealedByDeviceId = deviceId;
   card.revealedAt = Date.now();
   addLog(room, `${player.name} открыл карточку "${card.word}" (${cardTypeLabel(room, card.type)})`, deviceId);
@@ -321,7 +315,7 @@ export function revealCard(room: GameRoom, deviceId: string, cardId: string): Ga
     return room;
   }
 
-  if (card.type === room.currentTeam) {
+  if (card.type === room.currentTeam || (card.type === "neutral" && !room.settings.autoEndTurnOnNeutral)) {
     touch(room);
     return room;
   }
@@ -363,12 +357,15 @@ export function checkWinCondition(room: GameRoom): Team | null {
   return room.winner;
 }
 
-export function sanitizeStateForPlayer(room: GameRoom, deviceId: string, options: { revealKeyForDebugView?: boolean } = {}): SanitizedGameState {
+export function sanitizeStateForPlayer(room: GameRoom, deviceId: string): SanitizedGameState {
   const currentPlayer = room.players.find((player) => player.deviceId === deviceId) ?? null;
-  const showKey = room.status === "game_over" || room.keyRevealed || currentPlayer?.role === "spymaster" || options.revealKeyForDebugView;
+  const showKey = room.status === "game_over" || room.keyRevealed || currentPlayer?.role === "spymaster";
+  const { kickedDeviceIds: _kicked, ...publicRoom } = room;
 
   return {
-    ...room,
+    ...publicRoom,
+    votes: { ...room.votes },
+    pendingReveal: room.pendingReveal ? { ...room.pendingReveal } : null,
     cards: room.cards.map((card) => {
       if (showKey || card.revealed) {
         return { ...card };
@@ -391,9 +388,7 @@ export function sanitizeStateForPlayer(room: GameRoom, deviceId: string, options
 }
 
 export function updateSettings(room: GameRoom, patch: Partial<Settings>): GameRoom {
-  if (room.status !== "lobby") {
-    throw new GameError("Настройки можно менять только в лобби");
-  }
+  const previous = room.settings;
   room.settings = normalizeSettings({
     ...room.settings,
     ...patch,
@@ -402,8 +397,20 @@ export function updateSettings(room: GameRoom, patch: Partial<Settings>): GameRo
       ...(patch.teamNames ?? {})
     }
   });
-  room.teams.red.remaining = room.settings.redCards;
-  room.teams.blue.remaining = room.settings.blueCards;
+  if (room.status === "lobby") {
+    room.teams.red.remaining = room.settings.redCards;
+    room.teams.blue.remaining = room.settings.blueCards;
+  }
+  const phase = room.status === "paused" ? room.timers.lastStatusBeforePause : room.status;
+  let delta = 0;
+  if (phase === "guessing_phase") delta = room.settings.guessingSeconds - previous.guessingSeconds;
+  if (phase === "clue_phase") {
+    delta = room.settings.clueSeconds - previous.clueSeconds;
+    if (room.timers.phaseDurationSeconds === previous.clueSeconds + previous.familiarizationSeconds) delta += room.settings.familiarizationSeconds - previous.familiarizationSeconds;
+  }
+  if (room.timers.phaseDurationSeconds !== null) room.timers.phaseDurationSeconds += delta;
+  if (room.timers.phaseEndsAt !== null) room.timers.phaseEndsAt += delta * 1000;
+  if (room.timers.pausedRemainingMs !== null) room.timers.pausedRemainingMs = Math.max(0, room.timers.pausedRemainingMs + delta * 1000);
   addLog(room, "Настройки обновлены");
   touch(room);
   return room;
@@ -416,12 +423,16 @@ export function pauseGame(room: GameRoom): GameRoom {
   room.timers.pausedRemainingMs = room.timers.phaseEndsAt ? Math.max(0, room.timers.phaseEndsAt - Date.now()) : null;
   room.timers.lastStatusBeforePause = room.status;
   room.status = "paused";
+  clearVotes(room);
   addLog(room, "Игра поставлена на паузу");
   touch(room);
   return room;
 }
 
 export function resumeGame(room: GameRoom): GameRoom {
+  if (room.players.some((player) => player.role === "spymaster" && !player.connected)) {
+    throw new GameError("Загадывающий офлайн. Дождитесь подключения или измените состав игроков");
+  }
   if (room.status !== "paused" || !room.timers.lastStatusBeforePause) {
     throw new GameError("Игра не на паузе");
   }
@@ -448,7 +459,8 @@ export function revealKeyAfterGame(room: GameRoom): GameRoom {
 }
 
 export function resetPlayers(room: GameRoom): GameRoom {
-  room.players = [];
+  room.players = room.players.filter((player) => player.isBaseGuesser);
+  clearVotes(room);
   addLog(room, "Список игроков очищен");
   touch(room);
   return room;
@@ -527,6 +539,7 @@ function generateCards(settings: Settings, cardCounts: Record<Team, number>): Ca
 }
 
 function setPhase(room: GameRoom, status: RoomStatus, seconds: number | null): void {
+  clearVotes(room);
   room.status = status;
   room.currentPhase = status;
   room.timers.phaseEndsAt = seconds === null ? null : Date.now() + seconds * 1000;
@@ -536,10 +549,7 @@ function setPhase(room: GameRoom, status: RoomStatus, seconds: number | null): v
 }
 
 function canGuesserReveal(player: PlayerDevice, currentTeam: Team): boolean {
-  if (player.isBaseGuesser) {
-    return true;
-  }
-  return player.team === currentTeam;
+  return player.connected && player.role === "guesser" && (player.team === "both" || player.team === currentTeam);
 }
 
 function canSpymasterAct(player: PlayerDevice, currentTeam: Team): boolean {
@@ -652,6 +662,10 @@ function normalizeSpymasterAssignments(room: GameRoom): void {
   const spymasters = getSpymasters(room);
   if (spymasters.length === 1) {
     spymasters[0].team = "both";
+  } else if (spymasters.length === 2) {
+    const [first, second] = spymasters;
+    if (first.team !== "red" && first.team !== "blue") first.team = second.team === "red" ? "blue" : "red";
+    if (second.team !== "red" && second.team !== "blue" || second.team === first.team) second.team = OPPOSITE_TEAM[first.team];
   }
 }
 
@@ -666,7 +680,7 @@ function getInitialTeam(room: GameRoom, role: PlayerDevice["role"], isBaseGuesse
 }
 
 function normalizeSettings(settings: Settings): Settings {
-  return {
+  const normalized = {
     ...settings,
     boardSize: Number(settings.boardSize),
     redCards: Number(settings.redCards),
@@ -682,6 +696,15 @@ function normalizeSettings(settings: Settings): Settings {
     includeAdultWords: Boolean(settings.includeAdultWords),
     wordThemes: normalizeWordThemes(settings.wordThemes)
   };
+  for (const key of ["boardSize", "redCards", "blueCards", "neutralCards", "assassinCards", "familiarizationSeconds", "clueSeconds", "guessingSeconds", "maxSpymasters"] as const) {
+    const value = normalized[key];
+    if (!Number.isInteger(value) || value < 0 || value > 86400) throw new GameError(`Некорректное значение настройки: ${key}`);
+  }
+  if (normalized.redCards < 1 || normalized.blueCards < 1 || normalized.boardSize > 100 || normalized.maxSpymasters < 1 || normalized.maxSpymasters > 16) throw new GameError("Проверьте количество карточек и загадывающих");
+  if (normalized.redCards + normalized.blueCards + normalized.neutralCards + normalized.assassinCards !== normalized.boardSize) throw new GameError("Сумма карточек должна совпадать с размером поля");
+  if (!["random", "red", "blue"].includes(normalized.startingTeam)) throw new GameError("Некорректная стартовая команда");
+  normalized.teamNames = { red: String(normalized.teamNames.red).trim() || "Красные", blue: String(normalized.teamNames.blue).trim() || "Синие" };
+  return normalized;
 }
 
 function normalizeWordDifficulty(value: Settings["wordDifficulty"] | undefined): WordDifficulty {
@@ -701,6 +724,74 @@ function normalizeWordThemes(value: Settings["wordThemes"] | undefined): WordThe
 
 function normalizeName(name: string, fallback: string): string {
   return name.trim() || fallback;
+}
+
+export function clearVotes(room: GameRoom): void {
+  room.votes = {};
+  room.pendingReveal = null;
+}
+
+export function voteCard(room: GameRoom, deviceId: string, cardId: string): void {
+  requireStatus(room, ["guessing_phase"]);
+  const player = requirePlayer(room, deviceId);
+  if (!canGuesserReveal(player, room.currentTeam)) throw new GameError("Голосует только активная команда онлайн");
+  if (getRemainingSeconds(room) === 0) throw new GameError("Время отгадывания истекло");
+  const card = room.cards.find((item) => item.id === cardId);
+  if (!card || card.revealed) throw new GameError("Карточка недоступна для голосования");
+  if (room.votes[deviceId] === cardId) delete room.votes[deviceId];
+  else room.votes[deviceId] = cardId;
+  const voters = room.players.filter((item) => canGuesserReveal(item, room.currentTeam));
+  const unanimous = voters.length > 0 && voters.every((item) => room.votes[item.deviceId] === cardId);
+  room.pendingReveal = unanimous ? { cardId, endsAt: Date.now() + 3000 } : null;
+  touch(room);
+}
+
+export function resolveVotes(room: GameRoom): boolean {
+  const pending = room.pendingReveal;
+  if (!pending || room.status !== "guessing_phase" || Date.now() < pending.endsAt) return false;
+  const voters = room.players.filter((item) => canGuesserReveal(item, room.currentTeam));
+  if (getRemainingSeconds(room) === 0 || !voters.length || !voters.every((item) => room.votes[item.deviceId] === pending.cardId)) {
+    clearVotes(room);
+    return true;
+  }
+  revealCard(room, voters[0].deviceId, pending.cardId);
+  return true;
+}
+
+function assignPlayer(room: GameRoom, player: PlayerDevice, role: PlayerRole, team: TeamSelection): void {
+  if (!["guesser", "spymaster", "spectator"].includes(role) || !["red", "blue", "both", null].includes(team)) {
+    throw new GameError("Некорректная роль или команда");
+  }
+  if (role === "spymaster" && player.role !== role && getSpymasters(room).length >= room.settings.maxSpymasters) {
+    throw new GameError(`Максимум загадывающих: ${room.settings.maxSpymasters}`);
+  }
+  const oldRole = player.role;
+  player.role = role;
+  player.team = role === "spectator" ? null : team;
+  if (oldRole !== role) normalizeSpymasterAssignments(room);
+  if (role !== "spectator" && team !== null) player.team = team;
+  clearVotes(room);
+  if (role === "spymaster" && !player.connected && !["paused", "lobby", "game_over"].includes(room.status)) pauseGame(room);
+  touch(room);
+}
+
+export function updatePlayer(room: GameRoom, adminId: string, deviceId: string, role: PlayerRole, team: TeamSelection): void {
+  requireAdmin(room, adminId);
+  const player = requirePlayer(room, deviceId);
+  assignPlayer(room, player, role, team);
+  addLog(room, `Администратор изменил роль и команду игрока ${player.name}`, adminId);
+}
+
+export function kickPlayer(room: GameRoom, adminId: string, deviceId: string): void {
+  requireAdmin(room, adminId);
+  const player = requirePlayer(room, deviceId);
+  if (player.isBaseGuesser) throw new GameError("Нельзя удалить управляющего игрока");
+  markDisconnected(room, deviceId);
+  room.players = room.players.filter((item) => item.deviceId !== deviceId);
+  room.kickedDeviceIds.push(deviceId);
+  normalizeSpymasterAssignments(room);
+  clearVotes(room);
+  addLog(room, `${player.name} удалён из комнаты`, adminId);
 }
 
 function defaultName(role: PlayerDevice["role"]): string {

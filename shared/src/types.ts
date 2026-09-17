@@ -114,6 +114,9 @@ export interface Timers {
 }
 
 export interface GameRoom {
+  votes: Record<string, string>;
+  pendingReveal: { cardId: string; endsAt: number } | null;
+  kickedDeviceIds: string[];
   roomId: string;
   status: RoomStatus;
   currentPhase: RoomStatus;
@@ -132,7 +135,7 @@ export interface GameRoom {
   updatedAt: number;
 }
 
-export interface SanitizedGameState extends Omit<GameRoom, "cards"> {
+export interface SanitizedGameState extends Omit<GameRoom, "cards" | "kickedDeviceIds"> {
   cards: SanitizedCard[];
   currentPlayer: PlayerDevice | null;
   remainingSeconds: number | null;
@@ -145,6 +148,7 @@ export interface CreateRoomPayload {
 }
 
 export interface JoinRoomPayload {
+  updateProfile?: boolean;
   roomId: string;
   deviceId: string;
   name: string;
@@ -188,12 +192,16 @@ export interface ErrorMessagePayload {
 }
 
 export interface ClientToServerEvents {
+  heartbeat: (ack: () => void) => void;
+  updatePlayer: (payload: { deviceId: string; role: PlayerRole; team: TeamSelection }) => void;
+  kickPlayer: (payload: { deviceId: string }) => void;
+  tapCard: (payload: RevealCardPayload) => void;
   createRoom: (payload: CreateRoomPayload | undefined, ack?: (payload: RoomCreatedPayload) => void) => void;
   joinRoom: (payload: JoinRoomPayload) => void;
   chooseTeam: (payload: ChooseTeamPayload) => void;
   chooseSpymasterTeam: (payload: ChooseSpymasterTeamPayload) => void;
   startGame: () => void;
-  submitClue: (payload: SubmitCluePayload) => void;
+  submitClue: (payload: SubmitCluePayload, ack: (result: { ok: boolean; message?: string }) => void) => void;
   revealCard: (payload: RevealCardPayload) => void;
   endGuessing: () => void;
   updateSettings: (payload: UpdateSettingsPayload) => void;
@@ -207,6 +215,8 @@ export interface ClientToServerEvents {
 }
 
 export interface ServerToClientEvents {
+  cardTapped: (payload: { cardId: string }) => void;
+  kicked: () => void;
   roomCreated: (payload: RoomCreatedPayload) => void;
   newGameCreated: (payload: NewGamePayload) => void;
   gameState: (payload: { stateForCurrentPlayer: SanitizedGameState }) => void;

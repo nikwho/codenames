@@ -1,5 +1,5 @@
 import type { GameRoom } from "@codenames/shared";
-import { createContinuationGame, createGame, endTurn, getRemainingSeconds, startGuessingWithoutClue } from "./engine/game.js";
+import { createContinuationGame, createGame, endTurn, getRemainingSeconds, startGuessingWithoutClue, resolveVotes } from "./engine/game.js";
 
 type RoomChangedCallback = (room: GameRoom) => void;
 type TimerTickCallback = (room: GameRoom, remainingSeconds: number | null) => void;
@@ -60,6 +60,7 @@ export class RoomStore {
         continue;
       }
       if (remainingSeconds !== 0) {
+        if (resolveVotes(room)) this.onRoomChanged(room);
         continue;
       }
 

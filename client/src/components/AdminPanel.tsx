@@ -54,7 +54,6 @@ export function AdminPanel(props: AdminPanelProps) {
           <button
             className="btn-secondary justify-start"
             onClick={() => runMenuAction(() => setSettingsOpen(true))}
-            disabled={state.status !== "lobby"}
           >
             Настройки
           </button>
