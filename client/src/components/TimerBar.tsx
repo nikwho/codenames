@@ -10,6 +10,7 @@ export function TimerBar({ state, remainingSeconds }: TimerBarProps) {
   const total = state.timers.phaseDurationSeconds ?? totalSecondsFallback(state);
   const percent = remainingSeconds === null || total === 0 ? 0 : Math.max(0, Math.min(100, (remainingSeconds / total) * 100));
   const team = state.currentTeam;
+  const phaseLabel = state.status === "guessing_phase" ? "Отгадывают" : "Загадывают";
   const clueTeam = state.currentClue?.team ?? team;
   const clueText = state.currentClue?.text ?? "Подсказка еще не задана";
   const [openScoreTeam, setOpenScoreTeam] = useState<Team | null>(null);
@@ -44,7 +45,8 @@ export function TimerBar({ state, remainingSeconds }: TimerBarProps) {
           team === "red" ? "bg-red-500/20 text-red-200" : "bg-blue-500/20 text-blue-200"
         }`}
       >
-        {state.settings.teamNames[team]}
+        <span>{state.settings.teamNames[team]}</span>
+        <span className="ml-1 text-[10px] font-bold tracking-normal opacity-75 sm:text-xs">· {phaseLabel}</span>
       </div>
 
       <details

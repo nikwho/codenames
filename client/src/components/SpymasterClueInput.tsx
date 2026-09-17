@@ -26,7 +26,7 @@ export function SpymasterClueInput({ state, onSubmit }: SpymasterClueInputProps)
     (state.status === "clue_phase" || state.status === "guessing_phase") &&
     !state.currentClue &&
     player?.role === "spymaster" &&
-    (player.team === "both" || player.team === state.currentTeam);
+    (player.team === null || player.team === "both" || player.team === state.currentTeam);
 
   const submit = async () => {
     if (!canSubmit || !text.trim()) {
@@ -67,7 +67,7 @@ export function SpymasterClueInput({ state, onSubmit }: SpymasterClueInputProps)
         {pending ? "Отправка…" : "Отправить"}
       </button>
       <p className="basis-full text-sm text-slate-400">
-        {state.status === "paused" ? "Игра на паузе" : state.currentClue ? `Подсказка принята: ${state.currentClue.text}` : player?.team === null ? "Администратор должен назначить вам команду" : player?.team !== "both" && player?.team !== state.currentTeam ? "Сейчас ход другой команды" : "Формат: слово 2, слово 2+1 или слово 2(1)"}
+        {state.status === "paused" ? "Игра на паузе" : state.currentClue ? `Подсказка принята: ${state.currentClue.text}` : player?.team !== null && player?.team !== "both" && player?.team !== state.currentTeam ? "Сейчас ход другой команды" : "Формат: слово 2, слово 2+1 или слово 2(1)"}
       </p>
       {error && <p role="alert" className="basis-full text-sm text-rose-300">{error}</p>}
     </form>
