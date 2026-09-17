@@ -49,6 +49,9 @@ export function useGameSocket(roomId: string) {
   useEffect(() => {
     setState(null);
     setKicked(false);
+    setError(null);
+    setRemainingSeconds(null);
+    setNextRoomId(null);
     let removed = false;
     let heartbeatPending = false;
     let disposed = false;

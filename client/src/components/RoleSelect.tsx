@@ -9,7 +9,7 @@ interface RoleSelectProps {
 
 const ROLES: Array<{ value: PlayerRole; label: string; hint: string }> = [
   { value: "guesser", label: "Отгадываю", hint: "Открываю карточки" },
-  { value: "spymaster", label: "Загадываю", hint: "Даю подсказки" }
+  { value: "spymaster", label: "Веду", hint: "Даю подсказки" }
 ];
 
 export function RoleSelect({ currentPlayer, onJoin }: RoleSelectProps) {

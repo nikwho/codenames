@@ -64,7 +64,7 @@ export function TimerBar({ state, remainingSeconds }: TimerBarProps) {
           {!state.clueHistory.length && <p className="text-xs font-normal normal-case text-slate-400">Подсказок пока нет</p>}
           {state.clueHistory.map((clue) => <div key={clue.id} className={`rounded-lg p-2 ${clue.team === "red" ? "bg-red-500/15 text-red-200" : "bg-blue-500/15 text-blue-200"}`}>
             <p className="break-words">{clue.text}</p>
-            <p className="mt-1 text-xs font-normal normal-case">{state.settings.teamNames[clue.team]} · {state.players.find((player) => player.deviceId === clue.givenByDeviceId)?.name ?? "Загадывающий"}</p>
+            <p className="mt-1 text-xs font-normal normal-case">{state.settings.teamNames[clue.team]} · {state.players.find((player) => player.deviceId === clue.givenByDeviceId)?.name ?? "Ведущий"}</p>
           </div>)}
         </div>
       </details>

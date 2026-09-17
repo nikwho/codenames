@@ -5,8 +5,12 @@ import { RoomStore } from "../src/rooms.js";
 function setup() {
   vi.useFakeTimers();
   const room = createGame({ startingTeam: "red" });
-  for (const id of ["admin", "g2", "spy"]) addPlayer(room, { roomId: room.roomId, deviceId: id, name: id, role: id === "spy" ? "spymaster" : "guesser" });
-  chooseTeam(room, "admin", "red"); chooseTeam(room, "g2", "red");
+  for (const id of ["admin", "g2", "spy"]) {
+    const role = id === "spy" ? "spymaster" : "guesser";
+    const player = addPlayer(room, { roomId: room.roomId, deviceId: id, name: id, role });
+    if (player.role !== role) updatePlayer(room, "admin", id, role, "both");
+  }
+  chooseTeam(room, "g2", "red");
   startGame(room); startGuessingWithoutClue(room);
   const card = room.cards.find((item) => item.type === "red")!;
   return { room, card };
@@ -54,6 +58,7 @@ describe("multiplayer voting and roles", () => {
   });
   it("preserves admin rights and server assigned roles through reconnect", () => {
     const { room } = setup();
+    updatePlayer(room, "admin", "spy", "spymaster", "blue");
     updatePlayer(room, "admin", "admin", "spymaster", "red");
     expect(isBaseAdmin(room, "admin")).toBe(true);
     addPlayer(room, { roomId: room.roomId, deviceId: "admin", name: "old", role: "guesser" });
@@ -112,12 +117,10 @@ describe("multiplayer voting and roles", () => {
     for (const patch of [{ clueSeconds: NaN }, { redCards: -1 }, { redCards: 100 }, { maxSpymasters: 0 }]) expect(() => updateSettings(room, patch)).toThrow();
     expect(room.settings).toBe(settings);
   });
-  it("assigns the second spymaster automatically and accepts their clue", () => {
+  it("adds another player as a general guesser when the required roles are already filled", () => {
     const { room } = setup();
-    addPlayer(room, { roomId: room.roomId, deviceId: "spy2", name: "spy2", role: "spymaster" });
-    expect(room.players.find((p) => p.deviceId === "spy")?.team).toBe("red");
-    expect(room.players.find((p) => p.deviceId === "spy2")?.team).toBe("blue");
-    endTurn(room); submitClue(room, "spy2", { text: "абракадабра 2" }); expect(room.currentClue?.team).toBe("blue");
+    const player = addPlayer(room, { roomId: room.roomId, deviceId: "spy2", name: "spy2", role: "spymaster" });
+    expect([player.role, player.team]).toEqual(["guesser", "both"]);
   });
   it("keeps hidden cards private for admin and spectators", () => {
     const { room } = setup();

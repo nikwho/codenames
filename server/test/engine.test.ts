@@ -46,6 +46,8 @@ describe("game engine", () => {
       },
       "TEST"
     );
+    add(room, "table", "guesser");
+    add(room, "spy", "spymaster");
     startGame(room);
 
     expect(room.status).toBe("clue_phase");
@@ -118,29 +120,33 @@ describe("game engine", () => {
     expect(room.winner).toBe("red");
   });
 
-  it("locks first spymaster to opposite team when second chooses a team", () => {
-    const room = createGame();
-    add(room, "table", "guesser");
-    add(room, "spy-1", "spymaster");
-    add(room, "spy-2", "spymaster");
-
-    chooseSpymasterTeam(room, "spy-2", "red");
-
-    expect(room.players.find((player) => player.deviceId === "spy-1")?.team).toBe("blue");
-    expect(room.players.find((player) => player.deviceId === "spy-2")?.team).toBe("red");
-  });
-
   it("lets the only spymaster give clues for both teams after switching roles", () => {
     const room = startedRoom();
     room.currentTeam = "blue";
-    add(room, "device", "guesser");
-    updatePlayer(room, "table", "device", "guesser", "red");
-
-    updatePlayer(room, "table", "device", "spymaster", null);
-    const spymaster = room.players.find((player) => player.deviceId === "device")!;
+    const spymaster = room.players.find((player) => player.deviceId === "spy")!;
 
     expect(spymaster.team).toBe("both");
-    expect(() => submitClue(room, "device", { text: "река 2" })).not.toThrow();
+    expect(() => submitClue(room, "spy", { text: "река 2" })).not.toThrow();
+  });
+
+  it("requires a guesser and a spymaster for both teams before starting", () => {
+    const room = createGame();
+    add(room, "table", "guesser");
+    expect(() => startGame(room)).toThrow(/ведущий/);
+
+    add(room, "spy", "spymaster");
+    expect(() => startGame(room)).not.toThrow();
+  });
+
+  it("does not allow two spymasters to serve one team", () => {
+    const room = createGame();
+    add(room, "table", "guesser");
+    add(room, "red-spy", "spymaster");
+    add(room, "candidate", "guesser");
+    updatePlayer(room, "table", "red-spy", "spymaster", "red");
+
+    expect(() => updatePlayer(room, "table", "candidate", "spymaster", "red")).toThrow(/уже назначен ведущий/);
+    expect(room.players.find((player) => player.deviceId === "candidate")?.role).toBe("guesser");
   });
 
   it("starts guessing without ending turn when clue timer expires", () => {
@@ -201,12 +207,10 @@ describe("game engine", () => {
 
   it("rejects late clue from the other team's spymaster", () => {
     const room = startedRoom("red");
-    add(room, "red-spy", "spymaster");
-    add(room, "blue-spy", "spymaster");
-    updatePlayer(room, "table", "blue-spy", "spymaster", "blue");
+    updatePlayer(room, "table", "spy", "spymaster", "blue");
     startGuessingWithoutClue(room);
 
-    expect(() => submitClue(room, "blue-spy", { text: "мост 1" })).toThrow(/активную команду/);
+    expect(() => submitClue(room, "spy", { text: "мост 1" })).toThrow(/активную команду/);
   });
 
   it("base guesser keeps a custom name and table flag", () => {
@@ -218,19 +222,41 @@ describe("game engine", () => {
     expect(player.team).toBe("both");
   });
 
-  it("makes the first joining device the table even if a non-guesser role was requested", () => {
+  it("makes the first joining device the table and the common spymaster", () => {
     const room = createGame();
     const player = add(room, "creator", "spymaster", "Host");
 
-    expect(player.role).toBe("guesser");
+    expect(player.role).toBe("spymaster");
+    expect(player.team).toBe("both");
     expect(player.isBaseGuesser).toBe(true);
     expect(player.name).toBe("Host");
+  });
+
+  it("automatically fills the smallest playable composition as players join", () => {
+    const room = createGame();
+    const first = addPlayer(room, { roomId: room.roomId, deviceId: "first", name: "First", role: "guesser" });
+    const second = addPlayer(room, { roomId: room.roomId, deviceId: "second", name: "Second", role: "spymaster" });
+    const third = addPlayer(room, { roomId: room.roomId, deviceId: "third", name: "Third", role: "spymaster" });
+
+    expect([first.role, first.team]).toEqual(["spymaster", "both"]);
+    expect([second.role, second.team]).toEqual(["guesser", "both"]);
+    expect([third.role, third.team]).toEqual(["guesser", "both"]);
+  });
+
+  it("fills a missing team role before adding another general guesser", () => {
+    const room = createGame();
+    const first = addPlayer(room, { roomId: room.roomId, deviceId: "first", name: "First", role: "guesser" });
+    updatePlayer(room, first.deviceId, first.deviceId, "spymaster", "red");
+    const second = addPlayer(room, { roomId: room.roomId, deviceId: "second", name: "Second", role: "guesser" });
+
+    expect([second.role, second.team]).toEqual(["spymaster", "blue"]);
   });
 });
 
 function startedRoom(startingTeam: Team = "red"): GameRoom {
   const room = createGame({ startingTeam }, "TEST");
   add(room, "table", "guesser");
+  add(room, "spy", "spymaster");
   startGame(room);
   return room;
 }
@@ -244,12 +270,16 @@ function guessingRoom(team: Team): GameRoom {
 }
 
 function add(room: GameRoom, deviceId: string, role: PlayerRole, name = deviceId) {
-  return addPlayer(room, {
+  const player = addPlayer(room, {
     roomId: room.roomId,
     deviceId,
     name,
     role
   });
+  if (player.role !== role) {
+    updatePlayer(room, room.players[0]!.deviceId, deviceId, role, role === "spectator" ? null : "both");
+  }
+  return room.players.find((item) => item.deviceId === deviceId)!;
 }
 
 function count(room: GameRoom, type: "red" | "blue" | "neutral" | "assassin"): number {

@@ -1,51 +1,28 @@
-import type { PlayerDevice } from "@codenames/shared";
+import type { PlayerDevice, SanitizedGameState, Team } from "@codenames/shared";
+import { socket } from "../socket";
 
-interface PlayerListProps {
-  players: PlayerDevice[];
+interface PlayerListProps { state: SanitizedGameState; isAdmin: boolean; }
+
+export function PlayerList({ state, isAdmin }: PlayerListProps) {
+  return <section className="mt-3 grid gap-3"><TeamGroup team="red" state={state} isAdmin={isAdmin} /><TeamGroup team="blue" state={state} isAdmin={isAdmin} /></section>;
 }
 
-export function PlayerList({ players }: PlayerListProps) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-black/15 p-3 sm:rounded-3xl sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-black uppercase tracking-wide">Устройства</h2>
-        <span className="rounded-full bg-white/10 px-2 py-1 text-xs">{players.filter((player) => player.connected).length} онлайн</span>
-      </div>
-      <div className="mt-3 space-y-2 sm:mt-4">
-        {players.map((player) => (
-          <div key={player.deviceId} className="flex items-center justify-between gap-3 rounded-2xl bg-black/20 px-3 py-2.5 sm:px-4 sm:py-3">
-            <div className="min-w-0">
-              <p className="flex min-w-0 flex-wrap items-center gap-2 font-semibold">
-                <span className="truncate">{player.name}</span>
-                {player.isBaseGuesser && (
-                  <span className="rounded-full bg-[var(--primary)] px-2 py-0.5 text-[10px] font-black uppercase text-[#2f2411]">
-                    Администратор
-                  </span>
-                )}
-              </p>
-              <p className="text-xs text-slate-400">
-                {roleLabel(player.role)} · {teamLabel(player.team)}
-              </p>
-            </div>
-            <span className={player.connected ? "shrink-0 text-xs text-emerald-300" : "shrink-0 text-xs text-slate-500"}>
-              {player.connected ? "online" : "offline"}
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
+function TeamGroup({ team, state, isAdmin }: { team: Team; state: SanitizedGameState; isAdmin: boolean }) {
+  const assigned = state.players.filter((player) => player.team === team);
+  const shared = state.players.filter((player) => player.team === null || player.team === "both");
+  const players = [...assigned, ...shared].sort((a, b) => Number(b.role === "spymaster") - Number(a.role === "spymaster"));
+  const red = team === "red";
+  const tone = red ? "border-[#632d38] bg-[#261d25]" : "border-[#234d7c] bg-[#172232]";
+  const dot = red ? "bg-[#f04d55]" : "bg-[#3185df]";
+  return <section className={`rounded-[25px] border p-3 ${tone}`}><div className="mb-2 flex items-center gap-2"><span className={`size-2.5 rounded-full ${dot}`} /><h3 className="font-extrabold">{state.settings.teamNames[team]}</h3></div><div className="space-y-1.5">{players.length ? players.map((player) => <PlayerRow key={player.deviceId} player={player} state={state} isAdmin={isAdmin} />) : <p className="py-1 text-xs text-[#97a5b9]">Команда пока пустая</p>}</div></section>;
 }
 
-function roleLabel(role: PlayerDevice["role"]): string {
-  if (role === "spymaster") return "загадывает";
-  if (role === "spectator") return "наблюдает";
-  return "отгадывает";
+function PlayerRow({ player, state, isAdmin }: { player: PlayerDevice; state: SanitizedGameState; isAdmin: boolean }) {
+  const shared = player.team === null || player.team === "both";
+  const updateTeam = (team: Team) => { if (socket.connected && player.role === "guesser") socket.emit("updatePlayer", { deviceId: player.deviceId, role: "guesser", team: player.team === team ? "both" : team }); };
+  return <article className={`rounded-xl bg-[#121925] px-2.5 py-2 ${shared ? "border border-dashed border-[#d39b32]" : "border border-transparent"}`}><div className="flex items-center gap-2"><span className={player.role === "spymaster" ? "text-[#ffd12e]" : "text-[#aab4c4]"}>{player.role === "spymaster" ? <CrownIcon /> : <UserIcon />}</span><span className={player.role === "spymaster" ? "min-w-0 truncate text-sm font-extrabold text-[#fff3aa]" : "min-w-0 truncate text-sm font-extrabold"}>{player.name}{player.isBaseGuesser && <span className="ml-1.5 text-[10px] font-black text-[#f6b83d]">АДМИН</span>}</span><span className={player.role === "spymaster" ? "hidden text-xs font-bold text-[#ffdf47] sm:inline" : "hidden text-xs text-[#a8b7d0] sm:inline"}>{roleName(player.role)}</span><span className={`ml-auto size-2 shrink-0 rounded-full ${player.connected ? "bg-emerald-400" : "bg-[#5d6778]"}`} /></div>{isAdmin && player.role === "guesser" && <div className="mt-2 flex items-center justify-end gap-2">{(["red", "blue"] as const).map((team) => <button key={team} type="button" onClick={() => updateTeam(team)} className={`rounded-xl border px-3 py-1.5 text-xs font-extrabold transition ${player.team === team ? team === "red" ? "border-[#ff5757] bg-[#fc5255] text-white" : "border-[#277bdc] bg-[#287bd9] text-white" : team === "red" ? "border-[#722b34] text-[#b9c3d4] hover:bg-[#3a1f27]" : "border-[#234d80] text-[#b9c3d4] hover:bg-[#182b43]"}`}>{state.settings.teamNames[team]}</button>)}</div>}</article>;
 }
 
-function teamLabel(team: PlayerDevice["team"]): string {
-  if (team === "red") return "красные";
-  if (team === "blue") return "синие";
-  if (team === "both") return "обе команды";
-  return "без команды";
-}
+function roleName(role: PlayerDevice["role"]) { return role === "spymaster" ? "Ведущий" : role === "spectator" ? "Наблюдатель" : "Отгадывающий"; }
+function UserIcon() { return <svg aria-hidden viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.6-4 3-6 7-6s6.4 2 7 6"/></svg>; }
+function CrownIcon() { return <svg aria-hidden viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]"><path d="m4 7 4.1 3.5L12 4l3.9 6.5L20 7l-1.7 11H5.7L4 7Z"/><path d="M6 21h12"/></svg>; }
